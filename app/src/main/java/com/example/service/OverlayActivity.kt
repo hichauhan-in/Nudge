@@ -374,15 +374,6 @@ private fun DonateOptionChip(
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace
             )
-            if (!enabled) {
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "soon",
-                    color = GuardTextSecondary,
-                    fontSize = 9.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
         }
     }
 }
