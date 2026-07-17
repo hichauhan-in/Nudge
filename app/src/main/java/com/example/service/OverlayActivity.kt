@@ -241,63 +241,62 @@ class OverlayActivity : ComponentActivity() {
                             .align(Alignment.BottomEnd)
                             .padding(16.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.Bottom) {
-                            // Furthest left: Ko-fi
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            // Third (furthest left): Playto — coming soon
                             DonateOptionChip(
                                 visible = donateExpanded,
                                 delayMillis = 140,
-                                iconRes = com.example.R.drawable.ic_pay_kofi,
-                                label = "Ko-fi",
-                                enabled = true,
-                                horizontal = true,
-                                onClick = { launchKofi() }
-                            )
-                            // Left of the button: Playto
-                            DonateOptionChip(
-                                visible = donateExpanded,
-                                delayMillis = 70,
                                 iconRes = com.example.R.drawable.ic_pay_playto,
                                 label = "Playto",
                                 enabled = false,
-                                horizontal = true,
                                 onClick = {}
                             )
-                            // Right stack: UPI directly above the Donate button
-                            Column(horizontalAlignment = Alignment.End) {
-                                DonateOptionChip(
-                                    visible = donateExpanded,
-                                    delayMillis = 0,
-                                    iconRes = com.example.R.drawable.ic_pay_upi,
-                                    label = "UPI",
-                                    enabled = true,
-                                    horizontal = false,
-                                    onClick = { launchUpi() }
+                            // Second: Ko-fi
+                            DonateOptionChip(
+                                visible = donateExpanded,
+                                delayMillis = 70,
+                                iconRes = com.example.R.drawable.ic_pay_kofi,
+                                label = "Ko-fi",
+                                enabled = true,
+                                onClick = { launchKofi() }
+                            )
+                            // First (nearest the button): UPI
+                            DonateOptionChip(
+                                visible = donateExpanded,
+                                delayMillis = 0,
+                                iconRes = com.example.R.drawable.ic_pay_upi,
+                                label = "UPI",
+                                enabled = true,
+                                onClick = { launchUpi() }
+                            )
+                            // Anchor: Donate toggle (rightmost, same size/style as the chips)
+                            Row(
+                                modifier = Modifier
+                                    .height(40.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(GuardMintAccent.copy(alpha = 0.15f))
+                                    .border(
+                                        BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.4f)),
+                                        RoundedCornerShape(14.dp)
+                                    )
+                                    .clickable { donateExpanded = !donateExpanded }
+                                    .padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Favorite,
+                                    contentDescription = "Donate",
+                                    tint = GuardMintAccent,
+                                    modifier = Modifier.size(16.dp)
                                 )
-
-                                Button(
-                                    onClick = { donateExpanded = !donateExpanded },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = GuardMintAccent.copy(alpha = 0.15f),
-                                        contentColor = GuardMintAccent
-                                    ),
-                                    border = BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.4f)),
-                                    shape = RoundedCornerShape(16.dp),
-                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                                    modifier = Modifier.height(36.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Favorite,
-                                        contentDescription = "Donate",
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        "Donate",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "Donate",
+                                    color = GuardMintAccent,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
                             }
                         }
                     }
@@ -323,41 +322,24 @@ private fun DonateOptionChip(
     iconRes: Int,
     label: String,
     enabled: Boolean,
-    horizontal: Boolean = false,
     onClick: () -> Unit
 ) {
-    val enterTransition = if (horizontal) {
-        fadeIn(animationSpec = tween(200, delayMillis)) +
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(animationSpec = tween(200, delayMillis)) +
             slideInHorizontally(animationSpec = tween(300, delayMillis)) { it } +
             scaleIn(
                 animationSpec = tween(300, delayMillis),
                 initialScale = 0.7f,
                 transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0.5f)
-            )
-    } else {
-        fadeIn(animationSpec = tween(200, delayMillis)) +
-            slideInVertically(animationSpec = tween(300, delayMillis)) { it } +
-            scaleIn(
-                animationSpec = tween(300, delayMillis),
-                initialScale = 0.7f,
-                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 1f)
-            )
-    }
-    val exitTransition = if (horizontal) {
-        fadeOut(animationSpec = tween(120)) +
+            ),
+        exit = fadeOut(animationSpec = tween(120)) +
             slideOutHorizontally(animationSpec = tween(160)) { it / 2 }
-    } else {
-        fadeOut(animationSpec = tween(120)) +
-            slideOutVertically(animationSpec = tween(160)) { it / 2 }
-    }
-    AnimatedVisibility(
-        visible = visible,
-        enter = enterTransition,
-        exit = exitTransition
     ) {
         Row(
             modifier = Modifier
-                .padding(if (horizontal) PaddingValues(end = 8.dp) else PaddingValues(bottom = 8.dp))
+                .padding(end = 8.dp)
+                .height(40.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(if (enabled) GuardMintAccent.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f))
                 .border(
@@ -365,13 +347,13 @@ private fun DonateOptionChip(
                     RoundedCornerShape(14.dp)
                 )
                 .clickable(enabled = enabled) { onClick() }
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(26.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .size(24.dp)
+                    .clip(RoundedCornerShape(7.dp))
                     .background(Color.White),
                 contentAlignment = Alignment.Center
             ) {
@@ -380,7 +362,7 @@ private fun DonateOptionChip(
                     contentDescription = label,
                     tint = Color.Unspecified,
                     modifier = Modifier
-                        .size(17.dp)
+                        .size(16.dp)
                         .alpha(if (enabled) 1f else 0.5f)
                 )
             }
