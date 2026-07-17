@@ -2324,7 +2324,7 @@ fun areNotificationsEnabled(context: Context): Boolean {
 }
 
 fun launchUpiDonation(context: Context) {
-    val uri = android.net.Uri.parse("upi://pay?pa=9418575661@hdfc&pn=Developer&mc=0000&mode=02&purpose=00")
+    val uri = android.net.Uri.parse("upi://pay?pa=ait.17bcs4029-4@okhdfcbank&pn=Developer&cu=INR")
     val intent = Intent(Intent.ACTION_VIEW, uri)
     try {
         context.startActivity(Intent.createChooser(intent, "Pay with..."))
