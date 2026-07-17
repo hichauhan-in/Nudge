@@ -35,6 +35,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
@@ -1361,6 +1362,21 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
         onDispose { settingsLifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    var showSupportDialog by remember { mutableStateOf(false) }
+    if (showSupportDialog) {
+        SupportOptionsDialog(
+            onDismiss = { showSupportDialog = false },
+            onUpi = {
+                showSupportDialog = false
+                launchUpiDonation(contextCurrent)
+            },
+            onKofi = {
+                showSupportDialog = false
+                launchKofiDonation(contextCurrent)
+            }
+        )
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -1735,13 +1751,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                val uri = android.net.Uri.parse("upi://pay?pa=9418575661@hdfc&pn=Developer&mc=0000&mode=02&purpose=00")
-                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
-                                try {
-                                    contextCurrent.startActivity(android.content.Intent.createChooser(intent, "Pay with..."))
-                                } catch (e: Exception) {
-                                    android.widget.Toast.makeText(contextCurrent, "No UPI app found", android.widget.Toast.LENGTH_SHORT).show()
-                                }
+                                showSupportDialog = true
                             }
                             .padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -2310,6 +2320,150 @@ fun areNotificationsEnabled(context: Context): Boolean {
         context.getSystemService(android.app.NotificationManager::class.java).areNotificationsEnabled()
     } catch (e: Exception) {
         false
+    }
+}
+
+fun launchUpiDonation(context: Context) {
+    val uri = android.net.Uri.parse("upi://pay?pa=9418575661@hdfc&pn=Developer&mc=0000&mode=02&purpose=00")
+    val intent = Intent(Intent.ACTION_VIEW, uri)
+    try {
+        context.startActivity(Intent.createChooser(intent, "Pay with..."))
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, "No UPI app found", android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
+
+fun launchKofiDonation(context: Context) {
+    val uri = android.net.Uri.parse("https://ko-fi.com/hichauhan")
+    val intent = Intent(Intent.ACTION_VIEW, uri)
+    try {
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, "No browser found", android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
+
+@Composable
+private fun SupportOptionsDialog(onDismiss: () -> Unit, onUpi: () -> Unit, onKofi: () -> Unit) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = GuardSurface),
+            shape = RoundedCornerShape(24.dp),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    text = "Support the developer",
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Pick how you'd like to buy me a coffee. More options are on the way.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = GuardTextSecondary
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+
+                PaymentMethodRow(
+                    iconRes = R.drawable.ic_pay_upi,
+                    name = "UPI",
+                    subtitle = "Instant payment (India)",
+                    enabled = true,
+                    onClick = onUpi
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                PaymentMethodRow(
+                    iconRes = R.drawable.ic_pay_kofi,
+                    name = "Ko-fi",
+                    subtitle = "Buy me a coffee (cards, PayPal)",
+                    enabled = true,
+                    onClick = onKofi
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                PaymentMethodRow(
+                    iconRes = R.drawable.ic_pay_playto,
+                    name = "Playto",
+                    subtitle = "Coming soon",
+                    enabled = false,
+                    onClick = {}
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PaymentMethodRow(
+    iconRes: Int,
+    name: String,
+    subtitle: String,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(enabled = enabled) { onClick() }
+            .background(if (enabled) GuardSurfaceItem else Color.White.copy(alpha = 0.02f))
+            .border(
+                BorderStroke(1.dp, if (enabled) GuardMintAccent.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.05f)),
+                RoundedCornerShape(14.dp)
+            )
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color.White),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                painter = androidx.compose.ui.res.painterResource(id = iconRes),
+                contentDescription = name,
+                tint = Color.Unspecified,
+                modifier = Modifier
+                    .size(22.dp)
+                    .alpha(if (enabled) 1f else 0.45f)
+            )
+        }
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = name,
+                fontWeight = FontWeight.Bold,
+                color = if (enabled) Color.White else GuardTextSecondary,
+                fontSize = 15.sp
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = GuardTextSecondary
+            )
+        }
+        if (enabled) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                tint = GuardMintAccent,
+                modifier = Modifier.size(18.dp)
+            )
+        } else {
+            Text(
+                text = "SOON",
+                color = GuardTextSecondary,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.sp
+            )
+        }
     }
 }
 

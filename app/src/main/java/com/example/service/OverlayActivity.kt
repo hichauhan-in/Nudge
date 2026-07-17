@@ -22,6 +22,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
@@ -190,47 +191,114 @@ class OverlayActivity : ComponentActivity() {
                     }
                 }
 
-                // Small Donate button on the bottom right
+                // Small Donate button on the bottom right — bubbles up payment options
                 if (sessionState is SessionState.Prompting || sessionState is SessionState.Expired) {
                     val contextCurrent = LocalContext.current
+                    var donateExpanded by remember { mutableStateOf(false) }
+
+                    // Tap-outside scrim to collapse the options
+                    if (donateExpanded) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clickable(
+                                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                    indication = null
+                                ) { donateExpanded = false }
+                        )
+                    }
+
+                    val launchUpi = {
+                        donateExpanded = false
+                        SessionManager.isDonationFlowActive = true
+                        val uri = android.net.Uri.parse("upi://pay?pa=9418575661@hdfc&pn=Developer&mc=0000&mode=02&purpose=00")
+                        val intent = Intent(Intent.ACTION_VIEW, uri)
+                        try {
+                            contextCurrent.startActivity(Intent.createChooser(intent, "Pay with..."))
+                        } catch (e: Exception) {
+                            SessionManager.isDonationFlowActive = false
+                            android.widget.Toast.makeText(contextCurrent, "No UPI app found", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+
+                    val launchKofi = {
+                        donateExpanded = false
+                        SessionManager.isDonationFlowActive = true
+                        val uri = android.net.Uri.parse("https://ko-fi.com/hichauhan")
+                        val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        try {
+                            contextCurrent.startActivity(intent)
+                        } catch (e: Exception) {
+                            SessionManager.isDonationFlowActive = false
+                            android.widget.Toast.makeText(contextCurrent, "No browser found", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(16.dp)
                     ) {
-                        Button(
-                            onClick = {
-                                SessionManager.isDonationFlowActive = true
-                                val uri = android.net.Uri.parse("upi://pay?pa=9418575661@hdfc&pn=Developer&mc=0000&mode=02&purpose=00")
-                                val intent = Intent(Intent.ACTION_VIEW, uri)
-                                try {
-                                    contextCurrent.startActivity(Intent.createChooser(intent, "Pay with..."))
-                                } catch (e: Exception) {
-                                    SessionManager.isDonationFlowActive = false
-                                    android.widget.Toast.makeText(contextCurrent, "No UPI app found", android.widget.Toast.LENGTH_SHORT).show()
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            // Furthest left: Ko-fi
+                            DonateOptionChip(
+                                visible = donateExpanded,
+                                delayMillis = 140,
+                                iconRes = com.example.R.drawable.ic_pay_kofi,
+                                label = "Ko-fi",
+                                enabled = true,
+                                horizontal = true,
+                                onClick = { launchKofi() }
+                            )
+                            // Left of the button: Playto
+                            DonateOptionChip(
+                                visible = donateExpanded,
+                                delayMillis = 70,
+                                iconRes = com.example.R.drawable.ic_pay_playto,
+                                label = "Playto",
+                                enabled = false,
+                                horizontal = true,
+                                onClick = {}
+                            )
+                            // Right stack: UPI directly above the Donate button
+                            Column(horizontalAlignment = Alignment.End) {
+                                DonateOptionChip(
+                                    visible = donateExpanded,
+                                    delayMillis = 0,
+                                    iconRes = com.example.R.drawable.ic_pay_upi,
+                                    label = "UPI",
+                                    enabled = true,
+                                    horizontal = false,
+                                    onClick = { launchUpi() }
+                                )
+
+                                Button(
+                                    onClick = { donateExpanded = !donateExpanded },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = GuardMintAccent.copy(alpha = 0.15f),
+                                        contentColor = GuardMintAccent
+                                    ),
+                                    border = BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.4f)),
+                                    shape = RoundedCornerShape(16.dp),
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                                    modifier = Modifier.height(36.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Favorite,
+                                        contentDescription = "Donate",
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        "Donate",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace
+                                    )
                                 }
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = GuardMintAccent.copy(alpha = 0.15f),
-                                contentColor = GuardMintAccent
-                            ),
-                            border = BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.4f)),
-                            shape = RoundedCornerShape(16.dp),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                            modifier = Modifier.height(36.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Favorite,
-                                contentDescription = "Donate via UPI",
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                "Donate",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
+                            }
                         }
                     }
                 }
@@ -245,6 +313,95 @@ class OverlayActivity : ComponentActivity() {
         }
         startActivity(homeIntent)
         safeFinish()
+    }
+}
+
+@Composable
+private fun DonateOptionChip(
+    visible: Boolean,
+    delayMillis: Int,
+    iconRes: Int,
+    label: String,
+    enabled: Boolean,
+    horizontal: Boolean = false,
+    onClick: () -> Unit
+) {
+    val enterTransition = if (horizontal) {
+        fadeIn(animationSpec = tween(200, delayMillis)) +
+            slideInHorizontally(animationSpec = tween(300, delayMillis)) { it } +
+            scaleIn(
+                animationSpec = tween(300, delayMillis),
+                initialScale = 0.7f,
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0.5f)
+            )
+    } else {
+        fadeIn(animationSpec = tween(200, delayMillis)) +
+            slideInVertically(animationSpec = tween(300, delayMillis)) { it } +
+            scaleIn(
+                animationSpec = tween(300, delayMillis),
+                initialScale = 0.7f,
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 1f)
+            )
+    }
+    val exitTransition = if (horizontal) {
+        fadeOut(animationSpec = tween(120)) +
+            slideOutHorizontally(animationSpec = tween(160)) { it / 2 }
+    } else {
+        fadeOut(animationSpec = tween(120)) +
+            slideOutVertically(animationSpec = tween(160)) { it / 2 }
+    }
+    AnimatedVisibility(
+        visible = visible,
+        enter = enterTransition,
+        exit = exitTransition
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(if (horizontal) PaddingValues(end = 8.dp) else PaddingValues(bottom = 8.dp))
+                .clip(RoundedCornerShape(14.dp))
+                .background(if (enabled) GuardMintAccent.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f))
+                .border(
+                    BorderStroke(1.dp, if (enabled) GuardMintAccent.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.08f)),
+                    RoundedCornerShape(14.dp)
+                )
+                .clickable(enabled = enabled) { onClick() }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.White),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = androidx.compose.ui.res.painterResource(id = iconRes),
+                    contentDescription = label,
+                    tint = Color.Unspecified,
+                    modifier = Modifier
+                        .size(17.dp)
+                        .alpha(if (enabled) 1f else 0.5f)
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = label,
+                color = if (enabled) GuardMintAccent else GuardTextSecondary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
+            )
+            if (!enabled) {
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "soon",
+                    color = GuardTextSecondary,
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        }
     }
 }
 
