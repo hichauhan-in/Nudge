@@ -110,10 +110,18 @@ class OverlayActivity : ComponentActivity() {
                 triggerHomeMinimize()
             }
 
+            val quotaActive = sessionState is SessionState.QuotaExhausted
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(if (useBlurredBackground) Color.Black.copy(alpha = 0.35f) else GuardBlack)
+                    .background(
+                        when {
+                            useBlurredBackground && quotaActive -> Color(0xFF2A0000).copy(alpha = 0.5f)
+                            useBlurredBackground -> Color.Black.copy(alpha = 0.35f)
+                            quotaActive -> Color(0xFF160303)
+                            else -> GuardBlack
+                        }
+                    )
             ) {
                 Box(
                     modifier = Modifier
@@ -163,6 +171,21 @@ class OverlayActivity : ComponentActivity() {
                                     }
                                 )
                             }
+                            is SessionState.QuotaExhausted -> {
+                                QuotaExhaustedScreen(
+                                    isSarcasticMode = isSarcasticMode,
+                                    appName = state.appName,
+                                    packageName = state.packageName,
+                                    strict = state.strict,
+                                    onClose = {
+                                        SessionManager.resetState()
+                                        triggerHomeMinimize()
+                                    },
+                                    onContinue = {
+                                        SessionManager.proceedPastQuota(state.packageName, state.appName)
+                                    }
+                                )
+                            }
                             else -> {
                                 // For Active / Idle status, finish layout
                                 Box(modifier = Modifier.size(1.dp)) {
@@ -178,7 +201,7 @@ class OverlayActivity : ComponentActivity() {
                         Card(
                             colors = CardDefaults.cardColors(containerColor = GuardSurface.copy(alpha = 0.95f)),
                             shape = RoundedCornerShape(28.dp),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
+                            border = BorderStroke(1.dp, if (quotaActive) Color.Red.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.1f)),
                             modifier = Modifier.fillMaxWidth(),
                             elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
                         ) {
@@ -379,6 +402,44 @@ private fun DonateOptionChip(
 }
 
 @Composable
+private fun QuotaRemainingSection(packageName: String) {
+    val quota = remember(packageName) { SessionManager.getQuotaMinutes(packageName) }
+    if (quota <= 0) return
+    val remaining = remember(packageName) { SessionManager.getQuotaRemainingMinutes(packageName) }
+    val exceeded = remaining <= 0
+    val accent = if (exceeded) Color(0xFFEF5350) else GuardMintAccent
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(20.dp))
+                .background(accent.copy(alpha = 0.10f))
+                .border(BorderStroke(1.dp, accent.copy(alpha = 0.30f)), RoundedCornerShape(20.dp))
+                .padding(horizontal = 14.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = if (exceeded) Icons.Default.Warning else Icons.Default.Timer,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = if (exceeded) "Daily quota spent" else "$remaining min left in daily quota",
+                color = accent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+        Spacer(modifier = Modifier.height(20.dp))
+    }
+}
+
+@Composable
 fun MindfulPromptFlow(
     isSarcasticMode: Boolean = false,
     packageName: String,
@@ -389,6 +450,7 @@ fun MindfulPromptFlow(
 ) {
     DurationSelectionScreen(
         isSarcasticMode = isSarcasticMode,
+        packageName = packageName,
         appName = appName,
         onSelected = onAccept,
         onBypass = onBypass,
@@ -478,6 +540,7 @@ fun IntentionSelectionScreen(
 @Composable
 fun DurationSelectionScreen(
     isSarcasticMode: Boolean = false,
+    packageName: String,
     appName: String,
     onSelected: (Int) -> Unit,
     onBypass: () -> Unit,
@@ -546,6 +609,8 @@ fun DurationSelectionScreen(
         )
 
         Spacer(modifier = Modifier.height(32.dp))
+
+        QuotaRemainingSection(packageName)
 
         // Fast Pill Options
         Row(
@@ -728,6 +793,7 @@ fun ExpirySheet(
 
         Spacer(modifier = Modifier.height(32.dp))
 
+        QuotaRemainingSection(packageName)
 
         // Quick Extend Options
         Row(
@@ -836,6 +902,150 @@ fun ExpirySheet(
         }
     }
 }
+@Composable
+fun QuotaExhaustedScreen(
+    isSarcasticMode: Boolean = false,
+    appName: String,
+    packageName: String,
+    strict: Boolean,
+    onClose: () -> Unit,
+    onContinue: () -> Unit
+) {
+    val consumedMinutes = remember(packageName) { SessionManager.getQuotaConsumedMinutesTodayLive(packageName) }
+    val sarcasticQuota = remember { SARCASTIC_QUOTA.random() }
+    val dangerRed = Color(0xFFEF5350)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .background(dangerRed.copy(alpha = 0.12f), CircleShape)
+                .border(1.5.dp, dangerRed, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = if (strict) Icons.Default.Lock else Icons.Default.Warning,
+                contentDescription = "Quota Exhausted",
+                tint = dangerRed,
+                modifier = Modifier.size(36.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text(
+            text = if (strict) "Locked for Today" else "Daily Limit Reached",
+            style = MaterialTheme.typography.titleLarge,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace,
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        val body = when {
+            isSarcasticMode -> sarcasticQuota
+            strict -> "You've used your full daily quota for $appName. Strict Mode is on, so it's locked until tomorrow."
+            else -> "You've used your full daily quota for $appName today. You can still continue, but be honest with yourself."
+        }
+        Text(
+            text = body,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (isSarcasticMode) dangerRed.copy(alpha = 0.9f) else GuardTextSecondary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 24.dp)
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(dangerRed.copy(alpha = 0.10f))
+                .border(BorderStroke(1.dp, dangerRed.copy(alpha = 0.3f)), RoundedCornerShape(12.dp))
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+        ) {
+            Text(
+                text = "Used today: $consumedMinutes min",
+                color = dangerRed,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        if (strict) {
+            Button(
+                onClick = onClose,
+                colors = ButtonDefaults.buttonColors(containerColor = GuardMintAccent, contentColor = GuardBlack),
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+            ) {
+                Text("Close $appName", fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                text = "To override, disable Strict Mode or raise this app's daily quota in Settings.",
+                style = MaterialTheme.typography.bodySmall,
+                color = GuardTextSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 24.dp)
+            )
+        } else {
+            Button(
+                onClick = onContinue,
+                colors = ButtonDefaults.buttonColors(containerColor = dangerRed.copy(alpha = 0.9f), contentColor = Color.White),
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+            ) {
+                Text("Continue Anyway", fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedButton(
+                onClick = onClose,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+            ) {
+                Text("Close $appName", fontWeight = FontWeight.Medium)
+            }
+        }
+    }
+}
+
+val SARCASTIC_QUOTA = listOf(
+    "Your daily quota is gone. Impressive, really.",
+    "You budgeted your own time and still blew past it.",
+    "The limit you set? Yeah, that's toast.",
+    "Out of quota. But sure, let's pretend that means nothing.",
+    "You made a rule for yourself and here you are, breaking it.",
+    "Daily allowance: spent. Self-control: also spent.",
+    "This is exactly what 'just five minutes' turns into.",
+    "You set the limit. You. Remember that.",
+    "Quota exhausted. Willpower, optional apparently.",
+    "Even your own boundaries can't save you today."
+)
+
 val SARCASTIC_FIRST_OPEN = listOf(
     "Oh, you're back? What a surprise.",
     "Do you really want to go there after spending so much time on this?",

@@ -22,10 +22,12 @@ class AppAccessibilityService : AccessibilityService() {
     // Resets timers when the phone is locked (only acts in CLEAR_ON_LOCK mode).
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == Intent.ACTION_SCREEN_OFF &&
-                SessionManager.timerMode.value == SessionManager.TIMER_MODE_CLEAR_ON_LOCK
-            ) {
-                SessionManager.resetAll()
+            if (intent.action == Intent.ACTION_SCREEN_OFF) {
+                // Screen off = the user stopped using the app; bank its foreground time.
+                SessionManager.flushForegroundUsage()
+                if (SessionManager.timerMode.value == SessionManager.TIMER_MODE_CLEAR_ON_LOCK) {
+                    SessionManager.resetAll()
+                }
             }
         }
     }
@@ -68,6 +70,15 @@ class AppAccessibilityService : AccessibilityService() {
         repository = ScreenGuardRepository(database.dao())
         SessionManager.init(this)
         registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
+
+        // Keep the set of quota-enabled packages current so foreground usage is charged correctly.
+        serviceScope.launch {
+            repository.allMonitoredApps.collect { apps ->
+                SessionManager.setQuotaConfig(
+                    apps.filter { it.dailyQuotaMinutes > 0 }.associate { it.packageName to it.dailyQuotaMinutes }
+                )
+            }
+        }
     }
 
     override fun onServiceConnected() {
@@ -106,8 +117,10 @@ class AppAccessibilityService : AccessibilityService() {
         if (isSystemLauncher(packageName)) {
             // On the home screen; the monitored app is no longer in front. A still-valid
             // countdown keeps running silently in the background; only an already-expired
-            // session is discarded so the next open starts fresh.
-            if (SessionManager.sessionState.value is SessionState.Expired) SessionManager.resetState()
+            // session (or a dismissed quota gate) is discarded so the next open starts fresh.
+            val s = SessionManager.sessionState.value
+            if (s is SessionState.Expired || s is SessionState.QuotaExhausted) SessionManager.resetState()
+            SessionManager.flushForegroundUsage()
             clearBypassExcept(null)
             SessionManager.lastUserAppPackage = null
             return
@@ -122,6 +135,7 @@ class AppAccessibilityService : AccessibilityService() {
 
         // A real, user-facing app is now in the foreground.
         SessionManager.lastUserAppPackage = packageName
+        SessionManager.noteForegroundUsage(packageName)
         clearBypassExcept(packageName)
 
         // 1. This app already has a valid, unexpired timer -> never re-prompt. Checked against
@@ -145,11 +159,17 @@ class AppAccessibilityService : AccessibilityService() {
             return
         }
 
+        // 3b. Quota gate already raised for this app -> re-show it (it was dismissed/minimized).
+        if (state is SessionState.QuotaExhausted && state.packageName == packageName) {
+            launchOverlay(packageName)
+            return
+        }
+
         // 4. This app was bypassed for the current session -> allow free use.
         if (SessionManager.bypassedAppsTemp.contains(packageName)) return
 
-        // 5. A leftover expired session from another app -> discard it.
-        if (state is SessionState.Expired) SessionManager.resetState()
+        // 5. A leftover expired / quota session from another app -> discard it.
+        if (state is SessionState.Expired || state is SessionState.QuotaExhausted) SessionManager.resetState()
 
         // 6. Prompt for a fresh timer only if this app is monitored and enabled.
         serviceScope.launch {
@@ -167,9 +187,21 @@ class AppAccessibilityService : AccessibilityService() {
                 launchOverlay(packageName)
                 return@launch
             }
+            if (now is SessionState.QuotaExhausted && now.packageName == packageName) {
+                launchOverlay(packageName)
+                return@launch
+            }
             if (SessionManager.bypassedAppsTemp.contains(packageName)) return@launch
 
             val appLabel = getAppLabel(packageName)
+
+            // Daily quota spent for this app? Raise the red gate before any timer prompt.
+            if (SessionManager.isDailyQuotaExhausted(packageName, monitoredApp.dailyQuotaMinutes)) {
+                if (!SessionManager.startQuotaBlock(packageName, appLabel, SessionManager.strictModeEnabled.value)) return@launch
+                launchOverlay(packageName)
+                return@launch
+            }
+
             if (!SessionManager.startPrompt(packageName, appLabel)) return@launch
             launchOverlay(packageName)
         }

@@ -37,6 +37,11 @@ object SessionManager {
     private val _timerMode = MutableStateFlow(TIMER_MODE_CLEAR_ON_LOCK)
     val timerMode: StateFlow<Int> = _timerMode
 
+    // Strict mode: when on, an app whose daily quota is spent is blocked entirely.
+    private const val KEY_STRICT_MODE = "strict_mode"
+    private val _strictModeEnabled = MutableStateFlow(false)
+    val strictModeEnabled: StateFlow<Boolean> = _strictModeEnabled
+
     // Independent per-app countdowns. Drives the status notification and the
     // "is this app already timed" checks.
     private val _activeTimers = MutableStateFlow<Map<String, ActiveTimer>>(emptyMap())
@@ -57,12 +62,15 @@ object SessionManager {
 
     private const val PREFS_NAME = "focus_time_prefs"
     private const val KEY_ACTIVE_SESSIONS = "active_sessions_json"
+    private const val KEY_QUOTA_USED_PREFIX = "quota_used_"
+    private const val KEY_QUOTA_DAY_PREFIX = "quota_day_"
 
     fun init(context: Context) {
         appContext = context.applicationContext
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         _isMasterGuardEnabled.value = prefs.getBoolean("master_guard_enabled", true)
         _timerMode.value = prefs.getInt(KEY_TIMER_MODE, TIMER_MODE_CLEAR_ON_LOCK)
+        _strictModeEnabled.value = prefs.getBoolean(KEY_STRICT_MODE, false)
         restoreSessions()
     }
 
@@ -79,6 +87,97 @@ object SessionManager {
         _timerMode.value = mode
         appContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             ?.edit()?.putInt(KEY_TIMER_MODE, mode)?.apply()
+    }
+
+    fun setStrictModeEnabled(enabled: Boolean) {
+        _strictModeEnabled.value = enabled
+        appContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            ?.edit()?.putBoolean(KEY_STRICT_MODE, enabled)?.apply()
+    }
+
+    private fun todayKey(): Long = java.time.LocalDate.now().toEpochDay()
+
+    /** Seconds of timer granted to [packageName] so far today (resets at local midnight). */
+    fun getQuotaConsumedSecondsToday(packageName: String): Int {
+        val prefs = appContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) ?: return 0
+        val day = prefs.getLong(KEY_QUOTA_DAY_PREFIX + packageName, -1L)
+        return if (day == todayKey()) prefs.getInt(KEY_QUOTA_USED_PREFIX + packageName, 0) else 0
+    }
+
+    fun getQuotaConsumedMinutesToday(packageName: String): Int =
+        getQuotaConsumedSecondsToday(packageName) / 60
+
+    /** True if [packageName] has a daily quota and today's actual usage meets/exceeds it. */
+    fun isDailyQuotaExhausted(packageName: String, quotaMinutes: Int): Boolean {
+        if (quotaMinutes <= 0) return false
+        return liveConsumedSeconds(packageName) >= quotaMinutes * 60
+    }
+
+    private fun consumeQuota(packageName: String, seconds: Int) {
+        if (seconds <= 0) return
+        val prefs = appContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) ?: return
+        val today = todayKey()
+        val storedDay = prefs.getLong(KEY_QUOTA_DAY_PREFIX + packageName, -1L)
+        val current = if (storedDay == today) prefs.getInt(KEY_QUOTA_USED_PREFIX + packageName, 0) else 0
+        prefs.edit()
+            .putLong(KEY_QUOTA_DAY_PREFIX + packageName, today)
+            .putInt(KEY_QUOTA_USED_PREFIX + packageName, current + seconds)
+            .apply()
+    }
+
+    // --- Actual foreground-usage accounting for daily quotas ------------------------------
+    // Quota is charged by the REAL time spent in the app (foreground dwell), never by the timer
+    // the user grants. Set a 30-min timer but leave after 5 min -> only 5 min is deducted.
+
+    @Volatile private var quotaMinutesByPackage: Map<String, Int> = emptyMap()
+    private var usageTrackedPkg: String? = null
+    private var usageStartTs: Long = 0L
+
+    /** Packages that currently have a daily quota (> 0) mapped to their limit. Synced by the service. */
+    fun setQuotaConfig(config: Map<String, Int>) {
+        quotaMinutesByPackage = config
+    }
+
+    /** Configured daily quota (minutes) for [packageName], or 0 if none. */
+    fun getQuotaMinutes(packageName: String): Int = quotaMinutesByPackage[packageName] ?: 0
+
+    /** [packageName] is now the foreground app; bank the previous app's elapsed dwell first. */
+    fun noteForegroundUsage(packageName: String) {
+        if (usageTrackedPkg == packageName) return
+        flushForegroundUsage()
+        usageTrackedPkg = packageName
+        usageStartTs = System.currentTimeMillis()
+    }
+
+    /** Adds the time spent in the tracked foreground app to its daily quota consumption. */
+    fun flushForegroundUsage() {
+        val pkg = usageTrackedPkg ?: return
+        val elapsedSeconds = ((System.currentTimeMillis() - usageStartTs) / 1000L).toInt()
+        usageTrackedPkg = null
+        usageStartTs = 0L
+        if (elapsedSeconds > 0 && quotaMinutesByPackage.containsKey(pkg)) {
+            consumeQuota(pkg, elapsedSeconds)
+        }
+    }
+
+    /** Consumed seconds today including the in-progress foreground dwell (if any) for [packageName]. */
+    private fun liveConsumedSeconds(packageName: String): Int {
+        var consumed = getQuotaConsumedSecondsToday(packageName)
+        if (usageTrackedPkg == packageName && usageStartTs > 0L) {
+            consumed += ((System.currentTimeMillis() - usageStartTs) / 1000L).toInt()
+        }
+        return consumed
+    }
+
+    /** Consumed minutes today including the live foreground dwell. */
+    fun getQuotaConsumedMinutesTodayLive(packageName: String): Int = liveConsumedSeconds(packageName) / 60
+
+    /** Minutes of daily quota still available for [packageName] (rounded up), 0 if none/spent. */
+    fun getQuotaRemainingMinutes(packageName: String): Int {
+        val quota = getQuotaMinutes(packageName)
+        if (quota <= 0) return 0
+        val remainingSeconds = quota * 60 - liveConsumedSeconds(packageName)
+        return if (remainingSeconds <= 0) 0 else (remainingSeconds + 59) / 60
     }
 
     fun extensionCountFor(packageName: String): Int = extensionCounts[packageName] ?: 0
@@ -110,6 +209,36 @@ object SessionManager {
             }
         }
         return true
+    }
+
+    /**
+     * Shows the "daily quota spent" gate for [packageName]. Mirrors [startPrompt]'s duplicate
+     * suppression so the red overlay isn't rebuilt on every foreground event.
+     */
+    fun startQuotaBlock(packageName: String, appName: String, strict: Boolean): Boolean {
+        val current = _sessionState.value
+        if (current is SessionState.QuotaExhausted && current.packageName == packageName) return false
+        if (isPromptInFlight.get() && promptInFlightPackage == packageName) return false
+
+        isPromptInFlight.set(true)
+        promptInFlightPackage = packageName
+        _sessionState.value = SessionState.QuotaExhausted(packageName, appName, strict)
+
+        scope.launch {
+            delay(2000L)
+            if (promptInFlightPackage == packageName) {
+                isPromptInFlight.set(false)
+                promptInFlightPackage = null
+            }
+        }
+        return true
+    }
+
+    /** User chose to continue past the quota gate -> fall through to the normal timer prompt. */
+    fun proceedPastQuota(packageName: String, appName: String) {
+        isPromptInFlight.set(false)
+        promptInFlightPackage = null
+        _sessionState.value = SessionState.Prompting(packageName, appName)
     }
 
     fun startSession(packageName: String, appName: String, durationMinutes: Int, repository: ScreenGuardRepository) {
@@ -176,8 +305,14 @@ object SessionManager {
             appContext?.let { com.example.service.NudgeWidgetProvider.triggerUpdate(it) }
 
             if (lastUserAppPackage == packageName) {
-                // Still in the foreground -> offer to extend.
-                _sessionState.value = SessionState.Expired(packageName, appName)
+                // Still in the foreground. If the app's daily quota is now spent, gate with the
+                // red quota screen; otherwise offer to extend as usual.
+                val quota = getQuotaMinutes(packageName)
+                _sessionState.value = if (quota > 0 && isDailyQuotaExhausted(packageName, quota)) {
+                    SessionState.QuotaExhausted(packageName, appName, _strictModeEnabled.value)
+                } else {
+                    SessionState.Expired(packageName, appName)
+                }
                 launchExpiredOverlay(packageName, appName)
             }
             // Otherwise the app is in the background -> silently discard.
@@ -351,4 +486,5 @@ sealed class SessionState {
     object Idle : SessionState()
     data class Prompting(val packageName: String, val appName: String) : SessionState()
     data class Expired(val packageName: String, val appName: String) : SessionState()
+    data class QuotaExhausted(val packageName: String, val appName: String, val strict: Boolean) : SessionState()
 }

@@ -124,6 +124,7 @@ data class AppDisplayItem(
     val appName: String,
     val isEnabled: Boolean,
     val isMonitored: Boolean = false,
+    val dailyQuotaMinutes: Int = 0,
     val icon: Drawable? = null
 )
 
@@ -223,6 +224,7 @@ class MainViewModel(private val repository: ScreenGuardRepository, context: Cont
                                 appName = appName,
                                 isEnabled = dbMonitored[packageName]?.isEnabled ?: false,
                                 isMonitored = dbMonitored.containsKey(packageName),
+                                dailyQuotaMinutes = dbMonitored[packageName]?.dailyQuotaMinutes ?: 0,
                                 icon = icon
                             )
                         } catch (e: Exception) {
@@ -240,11 +242,13 @@ class MainViewModel(private val repository: ScreenGuardRepository, context: Cont
 
     fun toggleAppMonitoring(packageName: String, appName: String, currentlyEnabled: Boolean) {
         viewModelScope.launch {
+            val existingQuota = _installedApps.value.firstOrNull { it.packageName == packageName }?.dailyQuotaMinutes ?: 0
             repository.insertMonitoredApp(
                 com.example.data.MonitoredApp(
                     packageName = packageName,
                     appName = appName,
-                    isEnabled = !currentlyEnabled
+                    isEnabled = !currentlyEnabled,
+                    dailyQuotaMinutes = existingQuota
                 )
             )
             // Refresh list status
@@ -258,6 +262,22 @@ class MainViewModel(private val repository: ScreenGuardRepository, context: Cont
             _installedApps.value = updatedList
             if (SessionManager.isMasterGuardEnabled.value) {
                 com.example.service.MonitorService.refresh(appContext)
+            }
+        }
+    }
+
+    fun setAppDailyQuota(packageName: String, appName: String, isEnabled: Boolean, quotaMinutes: Int) {
+        viewModelScope.launch {
+            repository.insertMonitoredApp(
+                com.example.data.MonitoredApp(
+                    packageName = packageName,
+                    appName = appName,
+                    isEnabled = isEnabled,
+                    dailyQuotaMinutes = quotaMinutes
+                )
+            )
+            _installedApps.value = _installedApps.value.map {
+                if (it.packageName == packageName) it.copy(dailyQuotaMinutes = quotaMinutes) else it
             }
         }
     }
@@ -1093,72 +1113,90 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                     items = filteredList,
                     key = { item -> item.packageName }
                 ) { item ->
-                    Row(
+                    var quotaExpanded by remember { mutableStateOf(false) }
+                    val hasQuota = item.dailyQuotaMinutes > 0
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 6.dp)
                             .border(BorderStroke(1.dp, Color.White.copy(0.03f)), RoundedCornerShape(16.dp))
                             .background(GuardSurfaceItem, RoundedCornerShape(16.dp))
-                            .padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(
-                            modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { quotaExpanded = !quotaExpanded }
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            AppIconView(
-                                icon = item.icon,
-                                appName = item.appName,
-                                isSelected = true,
-                                modifier = Modifier.size(40.dp)
-                            )
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Column {
-                                Text(
-                                    text = item.appName,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White,
-                                    fontSize = 15.sp
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AppIconView(
+                                    icon = item.icon,
+                                    appName = item.appName,
+                                    isSelected = true,
+                                    modifier = Modifier.size(40.dp)
                                 )
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = item.appName,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        fontSize = 15.sp
+                                    )
+                                    Text(
+                                        text = if (hasQuota) "Daily quota · ${formatQuotaLabel(item.dailyQuotaMinutes)}" else "Tap to set a daily quota",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (hasQuota) GuardMintAccent else GuardTextSecondary,
+                                        fontSize = 11.sp
+                                    )
+                                }
                             }
-                        }
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Switch(
-                                checked = item.isEnabled,
-                                onCheckedChange = {
-                                    if (item.isEnabled && isSarcasticMode) {
-                                        sarcasticDisableAction = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Switch(
+                                    checked = item.isEnabled,
+                                    onCheckedChange = {
+                                        if (item.isEnabled && isSarcasticMode) {
+                                            sarcasticDisableAction = {
+                                                viewModel.toggleAppMonitoring(item.packageName, item.appName, item.isEnabled)
+                                            }
+                                        } else {
                                             viewModel.toggleAppMonitoring(item.packageName, item.appName, item.isEnabled)
                                         }
-                                    } else {
-                                        viewModel.toggleAppMonitoring(item.packageName, item.appName, item.isEnabled)
-                                    }
-                                },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = GuardBlack,
-                                    checkedTrackColor = GuardMintAccent,
-                                    uncheckedThumbColor = Color.White.copy(alpha = 0.4f),
-                                    uncheckedTrackColor = Color.White.copy(alpha = 0.08f),
-                                    uncheckedBorderColor = Color.White.copy(alpha = 0.15f)
+                                    },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = GuardBlack,
+                                        checkedTrackColor = GuardMintAccent,
+                                        uncheckedThumbColor = Color.White.copy(alpha = 0.4f),
+                                        uncheckedTrackColor = Color.White.copy(alpha = 0.08f),
+                                        uncheckedBorderColor = Color.White.copy(alpha = 0.15f)
+                                    )
                                 )
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            IconButton(
-                                onClick = {
-                                    viewModel.deleteAppFromMonitoring(item.packageName)
-                                },
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = "Remove App",
-                                    tint = Color.Red.copy(alpha = 0.7f),
-                                    modifier = Modifier.size(20.dp)
-                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                IconButton(
+                                    onClick = {
+                                        viewModel.deleteAppFromMonitoring(item.packageName)
+                                    },
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Remove App",
+                                        tint = Color.Red.copy(alpha = 0.7f),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
+                        }
+
+                        AnimatedVisibility(visible = quotaExpanded) {
+                            AppQuotaConfigPanel(item = item, viewModel = viewModel)
                         }
                     }
                 }
@@ -1583,6 +1621,65 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                             )
                         }
                     }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            val strictMode by SessionManager.strictModeEnabled.collectAsStateWithLifecycle()
+            Card(
+                colors = CardDefaults.cardColors(containerColor = if (strictMode) Color.Red.copy(alpha = 0.12f) else GuardSurface),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(
+                        BorderStroke(1.dp, if (strictMode) Color.Red.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.05f)),
+                        RoundedCornerShape(16.dp)
+                    )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background((if (strictMode) Color.Red else GuardMintAccent).copy(alpha = 0.12f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Strict Mode",
+                            tint = if (strictMode) Color.Red else GuardMintAccent,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Strict Mode",
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Block an app once its daily quota is spent",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = GuardTextSecondary
+                        )
+                    }
+                    Switch(
+                        checked = strictMode,
+                        onCheckedChange = { SessionManager.setStrictModeEnabled(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = GuardBlack,
+                            checkedTrackColor = Color.Red,
+                            uncheckedThumbColor = Color.White.copy(alpha = 0.4f),
+                            uncheckedTrackColor = Color.White.copy(alpha = 0.08f),
+                            uncheckedBorderColor = Color.White.copy(alpha = 0.15f)
+                        )
+                    )
                 }
             }
 
@@ -2320,6 +2417,116 @@ fun areNotificationsEnabled(context: Context): Boolean {
         context.getSystemService(android.app.NotificationManager::class.java).areNotificationsEnabled()
     } catch (e: Exception) {
         false
+    }
+}
+
+private fun formatQuotaLabel(minutes: Int): String {
+    if (minutes <= 0) return "Off"
+    val h = minutes / 60
+    val m = minutes % 60
+    return when {
+        h > 0 && m > 0 -> "${h}h ${m}m"
+        h > 0 -> "${h}h"
+        else -> "${m}m"
+    }
+}
+
+@Composable
+private fun AppQuotaConfigPanel(item: AppDisplayItem, viewModel: MainViewModel) {
+    var sliderVal by remember(item.packageName) { mutableStateOf(item.dailyQuotaMinutes.toFloat()) }
+    val quotaMinutes = sliderVal.toInt()
+    val usedMinutes = remember(item.packageName, item.dailyQuotaMinutes) {
+        SessionManager.getQuotaConsumedMinutesToday(item.packageName)
+    }
+
+    Column(modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp)) {
+        HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Daily Quota",
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                fontSize = 13.sp,
+                fontFamily = FontFamily.Monospace
+            )
+            Text(
+                text = formatQuotaLabel(quotaMinutes),
+                color = if (quotaMinutes > 0) GuardMintAccent else GuardTextSecondary,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+
+        Slider(
+            value = sliderVal,
+            onValueChange = { sliderVal = (Math.round(it / 5f) * 5).toFloat() },
+            valueRange = 0f..180f,
+            onValueChangeFinished = {
+                viewModel.setAppDailyQuota(item.packageName, item.appName, item.isEnabled, sliderVal.toInt())
+            },
+            colors = SliderDefaults.colors(
+                thumbColor = GuardMintAccent,
+                activeTrackColor = GuardMintAccent,
+                inactiveTrackColor = Color.White.copy(alpha = 0.1f)
+            )
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(0, 30, 60, 120).forEach { preset ->
+                val selected = quotaMinutes == preset
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (selected) GuardMintAccent.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.04f))
+                        .border(
+                            BorderStroke(1.dp, if (selected) GuardMintAccent.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.06f)),
+                            RoundedCornerShape(10.dp)
+                        )
+                        .clickable {
+                            sliderVal = preset.toFloat()
+                            viewModel.setAppDailyQuota(item.packageName, item.appName, item.isEnabled, preset)
+                        }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (preset == 0) "Off" else formatQuotaLabel(preset),
+                        color = if (selected) GuardMintAccent else GuardTextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+        }
+
+        if (quotaMinutes > 0) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = "Used today: $usedMinutes / $quotaMinutes min",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (usedMinutes >= quotaMinutes) Color(0xFFEF5350) else GuardTextSecondary
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "Once spent, opening this app shows a red quota warning before any timer.",
+                style = MaterialTheme.typography.bodySmall,
+                color = GuardTextSecondary,
+                fontSize = 10.sp
+            )
+        }
     }
 }
 
