@@ -2557,7 +2557,7 @@ private fun AppQuotaConfigPanel(item: AppDisplayItem, viewModel: MainViewModel) 
 }
 
 fun launchUpiDonation(context: Context) {
-    val uri = android.net.Uri.parse("upi://pay?pa=9418575661&pn=Developer")
+    val uri = android.net.Uri.parse("upi://pay?pa=hichauhan.in@okhdfcbank&pn=Developer")
     val intent = Intent(Intent.ACTION_VIEW, uri)
     try {
         context.startActivity(Intent.createChooser(intent, "Pay with..."))
