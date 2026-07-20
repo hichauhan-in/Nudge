@@ -39,6 +39,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -2555,7 +2557,7 @@ private fun AppQuotaConfigPanel(item: AppDisplayItem, viewModel: MainViewModel) 
 }
 
 fun launchUpiDonation(context: Context) {
-    val uri = android.net.Uri.parse("upi://pay?pa=ait.17bcs4029-4@okhdfcbank&pn=Developer")
+    val uri = android.net.Uri.parse("upi://pay?pa=9418575661&pn=Developer")
     val intent = Intent(Intent.ACTION_VIEW, uri)
     try {
         context.startActivity(Intent.createChooser(intent, "Pay with..."))
