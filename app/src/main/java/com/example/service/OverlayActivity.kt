@@ -138,7 +138,7 @@ class OverlayActivity : ComponentActivity() {
                                     packageName = state.packageName,
                                     appName = state.appName,
                                     onMinimize = {
-                                        SessionManager.resetState()
+                                        SessionManager.logPromptResisted(state.packageName, state.appName, repository)
                                         triggerHomeMinimize()
                                     },
                                     onAccept = { minutes ->
@@ -234,7 +234,7 @@ class OverlayActivity : ComponentActivity() {
                     val launchUpi = {
                         donateExpanded = false
                         SessionManager.isDonationFlowActive = true
-                        val uri = android.net.Uri.parse("upi://pay?pa=ait.17bcs4029-4@okhdfcbank&pn=Developer&cu=INR")
+                        val uri = android.net.Uri.parse("upi://pay?pa=ait.17bcs4029-4@okhdfcbank&pn=Developer")
                         val intent = Intent(Intent.ACTION_VIEW, uri)
                         try {
                             contextCurrent.startActivity(Intent.createChooser(intent, "Pay with..."))

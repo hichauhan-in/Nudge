@@ -682,7 +682,7 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
         ) {
             StatCard(
                 modifier = Modifier.weight(1f),
-                title = "Open Count",
+                title = "Total Open Count",
                 value = stats.totalMindfulPauses.toString()
             )
             StatCard(
@@ -705,8 +705,8 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
             )
             StatCard(
                 modifier = Modifier.weight(1f),
-                title = "Guard Rate",
-                value = "${stats.successPercentage}%"
+                title = "Early Closed / Resisted",
+                value = stats.recentLogs.count { it.actionTaken == "CLOSED" }.toString()
             )
         }
 
@@ -761,19 +761,41 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
 
         Spacer(modifier = Modifier.height(32.dp))
 
-        // History Log Title
-        Text(
-            text = "Intercepts",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-            color = GuardTextSecondary,
-            fontFamily = FontFamily.Monospace,
-            letterSpacing = 1.sp
-        )
+        // History Log Title + day selector (only shows the selected day's intercepts)
+        var interceptDayOffset by remember { mutableStateOf(0) }
+        val dayLogs = remember(stats.recentLogs, interceptDayOffset) {
+            logsForDay(stats.recentLogs, interceptDayOffset)
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Intercepts",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = GuardTextSecondary,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.sp
+            )
+            Text(
+                text = dayLabel(interceptDayOffset),
+                color = GuardMintAccent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
+            )
+        }
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        if (stats.recentLogs.isEmpty()) {
+        DaySelectorBars(stats.recentLogs, interceptDayOffset) { interceptDayOffset = it }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (dayLogs.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -782,7 +804,7 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "No recorded logs yet.",
+                    text = "No intercepts on this day.",
                     color = GuardTextSecondary,
                     fontSize = 13.sp,
                     textAlign = TextAlign.Center
@@ -796,8 +818,8 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                     .fillMaxWidth()
                     .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.03f)), RoundedCornerShape(16.dp))
             ) {
-                // Show at most 10 intercept entries at once. Any additional entries are
-                // reachable by scrolling inside this section only — the page itself never grows.
+                // Show at most 10 intercept entries at once. Extra entries scroll inside
+                // this section only — the page itself never grows.
                 val maxVisibleLogs = 10
                 val logRowHeight = 56.dp
                 LazyColumn(
@@ -806,7 +828,7 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                         .heightIn(max = logRowHeight * maxVisibleLogs)
                         .padding(horizontal = 8.dp)
                 ) {
-                    items(stats.recentLogs, key = { it.id }) { log ->
+                    items(dayLogs, key = { it.id }) { log ->
                         InterceptLogRow(log = log, rowHeight = logRowHeight)
                     }
                 }
@@ -2513,25 +2535,27 @@ private fun AppQuotaConfigPanel(item: AppDisplayItem, viewModel: MainViewModel) 
         }
 
         if (quotaMinutes > 0) {
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = "Used today: $usedMinutes / $quotaMinutes min",
                 style = MaterialTheme.typography.bodySmall,
                 color = if (usedMinutes >= quotaMinutes) Color(0xFFEF5350) else GuardTextSecondary
             )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = "Once spent, opening this app shows a red quota warning before any timer.",
-                style = MaterialTheme.typography.bodySmall,
-                color = GuardTextSecondary,
-                fontSize = 10.sp
-            )
         }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = "Set a daily time quota here - once used, warning is displayed",
+            style = MaterialTheme.typography.bodySmall,
+            color = GuardTextSecondary,
+            fontSize = 10.sp
+        )
     }
 }
 
 fun launchUpiDonation(context: Context) {
-    val uri = android.net.Uri.parse("upi://pay?pa=ait.17bcs4029-4@okhdfcbank&pn=Developer&cu=INR")
+    val uri = android.net.Uri.parse("upi://pay?pa=ait.17bcs4029-4@okhdfcbank&pn=Developer")
     val intent = Intent(Intent.ACTION_VIEW, uri)
     try {
         context.startActivity(Intent.createChooser(intent, "Pay with..."))
@@ -3316,8 +3340,78 @@ fun WelcomeSplashScreen(onContinue: () -> Unit) {
     }
 }
 
+// ---- Day-wise usage helpers for the dashboard carousel -------------------------------------
+
+private fun dayBoundsMillis(daysAgo: Int): Pair<Long, Long> {
+    val cal = java.util.Calendar.getInstance()
+    cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+    cal.set(java.util.Calendar.MINUTE, 0)
+    cal.set(java.util.Calendar.SECOND, 0)
+    cal.set(java.util.Calendar.MILLISECOND, 0)
+    cal.add(java.util.Calendar.DAY_OF_YEAR, -daysAgo)
+    val start = cal.timeInMillis
+    return start to (start + 24L * 60L * 60L * 1000L)
+}
+
+private fun logsForDay(logs: List<SessionHistory>, daysAgo: Int): List<SessionHistory> {
+    val (start, end) = dayBoundsMillis(daysAgo)
+    return logs.filter { it.startTime in start until end }
+}
+
+private fun dailyUsageMinutes(logs: List<SessionHistory>, daysAgo: Int): Int =
+    logsForDay(logs, daysAgo).sumOf { it.durationSeconds } / 60
+
+private fun dayLabel(daysAgo: Int): String = when (daysAgo) {
+    0 -> "Today"
+    1 -> "Yesterday"
+    else -> "$daysAgo days ago"
+}
+
+/** A tappable 7-day bar strip (oldest → today). Heights scale with each day's usage. */
+@Composable
+private fun DaySelectorBars(
+    recentLogs: List<SessionHistory>,
+    selectedOffset: Int,
+    onSelect: (Int) -> Unit
+) {
+    val dayMinutes = remember(recentLogs) { (6 downTo 0).map { dailyUsageMinutes(recentLogs, it) } }
+    val maxMin = (dayMinutes.maxOrNull() ?: 0).coerceAtLeast(1)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Bottom
+    ) {
+        (6 downTo 0).forEachIndexed { index, daysAgo ->
+            val minutes = dayMinutes[index]
+            val heightFrac = (minutes.toFloat() / maxMin.toFloat()).coerceIn(0.06f, 1f)
+            val isSelected = daysAgo == selectedOffset
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable { onSelect(daysAgo) },
+                contentAlignment = Alignment.BottomCenter
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(heightFrac)
+                        .background(
+                            color = if (isSelected) GuardMintAccent else Color.White.copy(alpha = if (minutes > 0) 0.12f else 0.04f),
+                            shape = RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp)
+                        )
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun MindfulUsageCard(stats: DashboardStats, modifier: Modifier = Modifier, isSarcasticMode: Boolean = false) {
+    var selectedOffset by remember { mutableStateOf(0) }
     Card(
         colors = CardDefaults.cardColors(containerColor = if (isSarcasticMode) Color.Red.copy(alpha = 0.15f) else GuardSurface),
         shape = RoundedCornerShape(32.dp),
@@ -3333,7 +3427,7 @@ fun MindfulUsageCard(stats: DashboardStats, modifier: Modifier = Modifier, isSar
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (isSarcasticMode) "MINDLESS USAGE" else "MINDFUL USAGE",
+                    text = if (isSarcasticMode) "MINDLESS USAGE" else "USAGE",
                     style = MaterialTheme.typography.labelSmall.copy(
                         color = GuardTextSecondary,
                         fontWeight = FontWeight.Bold,
@@ -3348,23 +3442,25 @@ fun MindfulUsageCard(stats: DashboardStats, modifier: Modifier = Modifier, isSar
                 ) {
                     Icon(
                         imageVector = Icons.Default.Star,
-                        contentDescription = "Trending Up icon",
+                        contentDescription = "Usage icon",
                         tint = GuardMintAccent,
                         modifier = Modifier.size(16.dp)
                     )
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
+            val dayMinutes = remember(stats.recentLogs, selectedOffset) { dailyUsageMinutes(stats.recentLogs, selectedOffset) }
+            val daySessions = remember(stats.recentLogs, selectedOffset) { logsForDay(stats.recentLogs, selectedOffset).size }
+
             Row(
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                val actualMinutes = stats.totalTimeSpentMinutes
                 val animatedMinutes by androidx.compose.animation.core.animateIntAsState(
-                    targetValue = actualMinutes,
-                    animationSpec = androidx.compose.animation.core.tween(durationMillis = 1200, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                    targetValue = dayMinutes,
+                    animationSpec = androidx.compose.animation.core.tween(durationMillis = 700, easing = androidx.compose.animation.core.FastOutSlowInEasing),
                     label = "minutesCounter"
                 )
                 Text(
@@ -3385,49 +3481,24 @@ fun MindfulUsageCard(stats: DashboardStats, modifier: Modifier = Modifier, isSar
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = if (isSarcasticMode) "You finally did something right ${stats.totalMindfulPauses} times." else "You interrupted ${stats.totalMindfulPauses} mindless sessions.",
+                text = if (isSarcasticMode)
+                    "${dayLabel(selectedOffset)} · $daySessions mindless open${if (daySessions == 1) "" else "s"}"
+                else
+                    "${dayLabel(selectedOffset)} · $daySessions monitored open${if (daySessions == 1) "" else "s"}",
                 color = GuardTextSecondary,
                 fontSize = 14.sp
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.weight(1f))
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.Bottom
-            ) {
-                val today = System.currentTimeMillis()
-                val oneDayMs = 24 * 60 * 60 * 1000L
-                val dayCounts = (6 downTo 0).map { daysAgo ->
-                    val dayStart = today - (daysAgo * oneDayMs) - (today % oneDayMs)
-                    val dayEnd = dayStart + oneDayMs
-                    stats.recentLogs.count { it.startTime in dayStart until dayEnd }
-                }
-                val maxCount = dayCounts.maxOrNull()?.coerceAtLeast(1) ?: 1
-
-                dayCounts.forEachIndexed { index, count ->
-                    val height = (count.toFloat() / maxCount.toFloat()).coerceIn(0.06f, 1f)
-                    val isToday = index == 6
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight(height)
-                            .background(
-                                color = if (isToday) GuardMintAccent else Color.White.copy(alpha = if (count > 0) 0.12f else 0.04f),
-                                shape = RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp)
-                            )
-                    )
-                }
-            }
+            DaySelectorBars(stats.recentLogs, selectedOffset) { selectedOffset = it }
         }
     }
 }
 
 @Composable
 fun AppUsageInsightCard(stats: DashboardStats, modifier: Modifier = Modifier, isSarcasticMode: Boolean = false) {
+    var selectedOffset by remember { mutableStateOf(0) }
     Card(
         colors = CardDefaults.cardColors(containerColor = if (isSarcasticMode) Color.Red.copy(alpha = 0.15f) else GuardSurface),
         shape = RoundedCornerShape(32.dp),
@@ -3442,14 +3513,23 @@ fun AppUsageInsightCard(stats: DashboardStats, modifier: Modifier = Modifier, is
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "APP USAGE",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = GuardTextSecondary,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp
+                Column {
+                    Text(
+                        text = "APP USAGE",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = GuardTextSecondary,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
                     )
-                )
+                    Text(
+                        text = dayLabel(selectedOffset),
+                        color = GuardMintAccent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
                 Box(
                     modifier = Modifier
                         .size(32.dp)
@@ -3464,53 +3544,64 @@ fun AppUsageInsightCard(stats: DashboardStats, modifier: Modifier = Modifier, is
                     )
                 }
             }
-            
-            Spacer(modifier = Modifier.height(16.dp))
 
-            val appTimes = stats.recentLogs.groupBy { it.appName }
-                .mapValues { it.value.sumOf { log -> log.durationSeconds } / 60 }
-                .toList()
-                .sortedByDescending { it.second }
-                .take(3)
+            Spacer(modifier = Modifier.height(12.dp))
 
-            if (appTimes.isEmpty()) {
-                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text("No usage data yet.", color = GuardTextSecondary, fontSize = 14.sp)
-                }
-            } else {
-                Column(modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.SpaceEvenly) {
-                    appTimes.forEach { (appName, minutes) ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = appName,
-                                color = Color.White,
-                                fontSize = 15.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                text = "$minutes min",
-                                color = GuardMintAccent,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+            val appTimes = remember(stats.recentLogs, selectedOffset) {
+                logsForDay(stats.recentLogs, selectedOffset)
+                    .groupBy { it.appName }
+                    .mapValues { it.value.sumOf { log -> log.durationSeconds } / 60 }
+                    .toList()
+                    .filter { it.second > 0 }
+                    .sortedByDescending { it.second }
+                    .take(3)
+            }
+
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                if (appTimes.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("No usage on this day.", color = GuardTextSecondary, fontSize = 14.sp)
+                    }
+                } else {
+                    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
+                        appTimes.forEach { (appName, minutes) ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = appName,
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = "$minutes min",
+                                    color = GuardMintAccent,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            DaySelectorBars(stats.recentLogs, selectedOffset) { selectedOffset = it }
         }
     }
 }
 
 @Composable
 fun InterventionBehaviorCard(stats: DashboardStats, modifier: Modifier = Modifier, isSarcasticMode: Boolean = false) {
+    var selectedOffset by remember { mutableStateOf(0) }
     Card(
         colors = CardDefaults.cardColors(containerColor = if (isSarcasticMode) Color.Red.copy(alpha = 0.15f) else GuardSurface),
         shape = RoundedCornerShape(32.dp),
@@ -3525,14 +3616,23 @@ fun InterventionBehaviorCard(stats: DashboardStats, modifier: Modifier = Modifie
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = if (isSarcasticMode) "PATHETIC BEHAVIOR" else "INTERVENTION BEHAVIOR",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = GuardTextSecondary,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp
+                Column {
+                    Text(
+                        text = if (isSarcasticMode) "PATHETIC BEHAVIOR" else "INTERVENTION BEHAVIOR",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = GuardTextSecondary,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
                     )
-                )
+                    Text(
+                        text = dayLabel(selectedOffset),
+                        color = GuardMintAccent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
                 Box(
                     modifier = Modifier
                         .size(32.dp)
@@ -3547,24 +3647,29 @@ fun InterventionBehaviorCard(stats: DashboardStats, modifier: Modifier = Modifie
                     )
                 }
             }
-            
-            Spacer(modifier = Modifier.height(16.dp))
 
-            val actionCounts = stats.recentLogs.groupingBy { it.actionTaken }.eachCount()
-            val totalActions = actionCounts.values.sum().coerceAtLeast(1)
-            
+            Spacer(modifier = Modifier.height(12.dp))
+
+            val actionCounts = remember(stats.recentLogs, selectedOffset) {
+                logsForDay(stats.recentLogs, selectedOffset).groupingBy { it.actionTaken }.eachCount()
+            }
             val closedCount = actionCounts["CLOSED"] ?: 0
             val bypassedCount = actionCounts["BYPASSED"] ?: 0
-            val completedCount = actionCounts["COMPLETED"] ?: 0
-            
+            val completedCount = (actionCounts["COMPLETED"] ?: 0) + (actionCounts["EXTENDED"] ?: 0)
+            val totalActions = (closedCount + completedCount + bypassedCount).coerceAtLeast(1)
+
             Column(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 verticalArrangement = Arrangement.SpaceEvenly
             ) {
-                BehaviorRow("Closed/Resisted", closedCount, totalActions, GuardMintAccent)
+                BehaviorRow("Early Closed / Resisted", closedCount, totalActions, GuardMintAccent)
                 BehaviorRow("Completed Limits", completedCount, totalActions, Color(0xFF81D4FA))
                 BehaviorRow("Bypassed Limits", bypassedCount, totalActions, Color(0xFFEF5350))
             }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            DaySelectorBars(stats.recentLogs, selectedOffset) { selectedOffset = it }
         }
     }
 }

@@ -58,6 +58,7 @@ Open a guarded app  ─►  Mindful Prompt: "Commit to a healthy limit"
 2. **Get nudged** — opening a guarded app triggers a full‑screen prompt asking you to set a usage limit (quick pills or a custom slider).
 3. **Stay aware** — the countdown runs in the background; a single, collapsible notification shows every running timer with a **Reset** button.
 4. **Time's up** — when your window ends, Nudge asks whether to extend or wrap up. Ignore the limit for a session if you really must.
+5. **Daily quotas** _(optional)_ — expand any app in the Monitor Console to set a per‑day budget. Once it's spent, the next open shows a red **Daily Limit Reached** gate before any timer; with **Strict Mode** on, the app stays locked for the day.
 
 ---
 
@@ -65,12 +66,15 @@ Open a guarded app  ─►  Mindful Prompt: "Commit to a healthy limit"
 
 - 🛡️ **Per‑app guarding** — protect only the apps that pull you in.
 - ⏳ **Conscious usage windows** — quick 2/5/10/20‑min pills or a 1–60 min custom slider.
+- � **Daily usage quotas** — give any app a per‑day budget, charged by *real* time spent in the app. Spend it and the next open shows a red "daily limit reached" gate before any timer.
+- 🔒 **Strict Mode** — when a quota is spent, optionally *block* the app entirely until you disable Strict Mode or raise the quota.
 - 🔁 **Independent multi‑app timers** — several apps can run their own countdowns at once.
 - 🔔 **Live status notification** — one collapsible banner lists each active timer with a live countdown and a per‑app reset (fully optional, off by default).
 - 🧭 **Timer Behavior modes** — decide what happens to a running timer (see below).
 - 😏 **Sarcastic Mode** — swap gentle encouragement for savage, escalating snark.
 - 🌫️ **Blurred prompt background** — an optional frosted look for the intervention screen.
-- 📊 **Mindful insights** — track mindful pauses, time reclaimed, guarded apps, guard rate and an intercept log.
+- 📊 **Day‑wise insights** — a swipeable dashboard: pick any of the last 7 days to see total usage, per‑app breakdowns, and your intervention behavior (completed vs. early‑closed vs. bypassed).
+- ❤️ **Support the developer** — an optional in‑app tip jar (UPI & Ko‑fi).
 - 🔕 **Runs on device** — powered by Android's Accessibility Service + a lightweight foreground service that keeps your timers alive.
 
 ---
@@ -83,6 +87,19 @@ Configure how a running timer should behave under **Configure → Timer Behavior
 |---|---|
 | **Clear on lock** _(default)_ | Timers keep running while you use the phone, but **reset when you lock the screen** — so every fresh session asks again. |
 | **Persistent** | A timer runs until it expires **no matter what** — minimizing, switching apps, or removing it from recents won't stop it. |
+
+---
+
+## 📅 Daily quotas & Strict Mode
+
+Give any monitored app a **daily quota** — open the **Monitor Console** and tap an app to expand it, then set a budget with the slider or the quick presets.
+
+- **Charged by actual usage** — quota is spent by real foreground time, not by the timer you pick. Set a 30‑min timer but leave after 5, and only 5 minutes come off your budget.
+- **Always visible** — the Mindful Prompt shows how much of today's quota is left, right above the time options.
+- **Soft gate** — once the quota is spent, opening the app shows a red **Daily Limit Reached** screen *before* any timer. Choose **Continue Anyway** to still set a timer, or close the app.
+- **Strict Mode** _(Configure → System)_ — turn an exhausted quota into a hard **block**: the app stays locked for the day, and the only way in is to disable Strict Mode or raise the quota. A voluntary hard stop for the days you need it.
+
+Budgets reset automatically at local midnight.
 
 ---
 
@@ -148,7 +165,7 @@ cd nudge
 
 ## 🗺️ Roadmap ideas
 
-- Per‑app default limits & schedules
+- Per‑app schedules (e.g. quotas that apply only on weekdays)
 - Weekly mindful‑usage summary
 - Home‑screen widget refinements
 - Localization

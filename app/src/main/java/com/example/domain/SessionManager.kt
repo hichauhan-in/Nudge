@@ -363,6 +363,26 @@ object SessionManager {
         _sessionState.value = SessionState.Idle
     }
 
+    /** User dismissed the initial prompt without starting a timer -> logged as an early close/resist. */
+    fun logPromptResisted(packageName: String, appName: String, repository: ScreenGuardRepository) {
+        resetState()
+        scope.launch {
+            try {
+                repository.insertSession(
+                    SessionHistory(
+                        packageName = packageName,
+                        appName = appName,
+                        durationSeconds = 0,
+                        actionTaken = "CLOSED"
+                    )
+                )
+            } catch (e: Exception) {
+                // ignore logging failures
+            }
+            appContext?.let { com.example.service.NudgeWidgetProvider.triggerUpdate(it) }
+        }
+    }
+
     /** Terminates the running timer for [packageName] (e.g. the notification's Reset button). */
     fun resetSessionForPackage(packageName: String) {
         bypassedAppsTemp.remove(packageName)
@@ -407,7 +427,7 @@ object SessionManager {
                         packageName = timer.packageName,
                         appName = timer.appName,
                         durationSeconds = spent,
-                        actionTaken = "COMPLETED"
+                        actionTaken = "CLOSED"
                     )
                 )
                 com.example.service.NudgeWidgetProvider.triggerUpdate(ctx)
