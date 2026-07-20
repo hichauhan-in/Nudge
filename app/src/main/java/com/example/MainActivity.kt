@@ -2267,8 +2267,8 @@ fun HowItWorksScrollView(onBack: () -> Unit) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     // Feature list
                     SecurityFactRow(
-                        title = "100% Offline (No Internet Permission)",
-                        description = "Our application does NOT declare the android.permission.INTERNET tag in its manifest. It literally has no code permissions to contact any remote server. Your usage stats never leave your device."
+                        title = "We Never Transmit Your Data",
+                        description = "Nudge! processes and stores everything on this device. Your guarded apps, timers, session history and settings are never uploaded or sent to any server by us — there are no analytics, ads, or trackers."
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     SecurityFactRow(

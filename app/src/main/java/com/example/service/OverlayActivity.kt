@@ -24,7 +24,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -40,9 +39,7 @@ import com.example.ui.theme.GuardBlack
 import com.example.ui.theme.GuardSurface
 import com.example.ui.theme.GuardSurfaceItem
 import com.example.ui.theme.GuardMintAccent
-import com.example.ui.theme.GuardTextPrimary
 import com.example.ui.theme.GuardTextSecondary
-import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 class OverlayActivity : ComponentActivity() {
@@ -76,12 +73,8 @@ class OverlayActivity : ComponentActivity() {
         val database = AppDatabase.getDatabase(this)
         repository = ScreenGuardRepository(database.dao())
 
-        val pkgName = intent.getStringExtra("pkg") ?: ""
-        val appName = intent.getStringExtra("name") ?: ""
-
         setContent {
             val sessionState by SessionManager.sessionState.collectAsStateWithLifecycle()
-            val coroutineScope = rememberCoroutineScope()
             val prefs = LocalContext.current.getSharedPreferences("focus_time_prefs", android.content.Context.MODE_PRIVATE)
             val useBlurredBackground = prefs.getBoolean("use_blurred_background", false)
             val isSarcasticMode = prefs.getBoolean("sarcastic_mode", false)
@@ -459,83 +452,6 @@ fun MindfulPromptFlow(
 }
 
 
-
-@Composable
-fun IntentionSelectionScreen(
-    appName: String,
-    onSelected: (String) -> Unit,
-    onSkip: () -> Unit
-) {
-    val intentions = listOf(
-        "💬  Read specific message",
-        "✨  Post something creative",
-        "⏳  Urgent task / Look up info",
-        "🌪️  Doomscrolling / Habit / Bored"
-    )
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(
-            text = "Set Your Intention",
-            style = MaterialTheme.typography.titleLarge,
-            color = Color.White,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace,
-            textAlign = TextAlign.Center
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = "Why are you opening $appName right now?",
-            style = MaterialTheme.typography.bodyMedium,
-            color = GuardTextSecondary,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 24.dp)
-        )
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        intentions.forEach { intent ->
-            Card(
-                onClick = { onSelected(intent) },
-                colors = CardDefaults.cardColors(
-                    containerColor = GuardSurfaceItem,
-                    contentColor = Color.White
-                ),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 6.dp)
-                    .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp)
-                ) {
-                    Text(
-                        text = intent,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontFamily = FontFamily.SansSerif,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        TextButton(onClick = onSkip) {
-            Text("Skip question", color = GuardTextSecondary, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
 
 @Composable
 fun DurationSelectionScreen(
@@ -1046,71 +962,6 @@ val SARCASTIC_QUOTA = listOf(
     "Even your own boundaries can't save you today."
 )
 
-val SARCASTIC_FIRST_OPEN = listOf(
-    "Oh, you're back? What a surprise.",
-    "Do you really want to go there after spending so much time on this?",
-    "Another hour of your life, gone. Ready for more?",
-    "Ah yes, the pinnacle of human productivity.",
-    "Sure, open it again. It's not like you had plans.",
-    "Your future self is already disappointed in you.",
-    "Because nothing says 'I'm thriving' like opening this app again.",
-    "Oh look, the definition of insanity.",
-    "I'm sure *this* time you'll just be a minute.",
-    "Why be productive when you can do... whatever this is?",
-    "Welcome back to the void.",
-    "Haven't you had enough?",
-    "Just admit you have no self-control.",
-    "I was hoping you forgot about this app.",
-    "Here we go again...",
-    "Is this really the best use of your time?",
-    "Oh joy. More scrolling.",
-    "You again? Didn't you just leave?",
-    "This is why you don't get things done.",
-    "Prepare to achieve absolutely nothing.",
-    "Are you procrastinating, or just giving up?",
-    "Ah, your favorite time-waster.",
-    "Let me guess: just checking 'one thing'?",
-    "I bet you feel really productive right now.",
-    "Don't you have something better to do?",
-    "Welcome to the endless loop.",
-    "I'm not judging. Okay, maybe a little.",
-    "Are you sure about this?",
-    "Let's waste some more time, shall we?",
-    "You know this won't end well."
-)
-
-val SARCASTIC_EXPIRY = listOf(
-    "Wow, time's up. Who could have seen that coming?",
-    "Are you really going to extend this?",
-    "Time flies when you're achieving nothing.",
-    "You said just 5 minutes. We both knew it was a lie.",
-    "Want more time? Really?",
-    "Your 'quick check' is officially over.",
-    "Shouldn't you be doing something else by now?",
-    "The limit exists for a reason, you know.",
-    "Extending? Color me shocked.",
-    "I suppose you'll just hit extend again.",
-    "Is this your life now?",
-    "You're only lying to yourself.",
-    "Go ahead, break your own rules.",
-    "I'd tell you to stop, but you won't listen.",
-    "Another extension? How original.",
-    "Why do we even have a timer?",
-    "Just close the app. You know you should.",
-    "Do you really want to go ahead without a limit?",
-    "Have some self-respect and close it.",
-    "More time? Haven't you wasted enough?",
-    "Sure, let's pretend this is necessary.",
-    "I'm sure you 'need' to finish what you're doing.",
-    "We both know you're just procrastinating.",
-    "Extending the timer won't extend your potential.",
-    "I'm tired of counting your wasted minutes.",
-    "Do you even remember why you opened this?",
-    "Just give up and close it.",
-    "You're not fooling anyone.",
-    "I guess self-control is hard.",
-    "Go on, prove me right and extend it."
-)
 val SARCASTIC_LONG_DURATION = listOf(
     "Are you really going to use it for this long?",
     "Why not just move in with the app?",
