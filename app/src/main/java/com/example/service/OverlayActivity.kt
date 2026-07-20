@@ -227,7 +227,7 @@ class OverlayActivity : ComponentActivity() {
                     val launchUpi = {
                         donateExpanded = false
                         SessionManager.isDonationFlowActive = true
-                        val uri = android.net.Uri.parse("upi://pay?pa=hichauhan.in@okhdfcbank&pn=Developer")
+                        val uri = android.net.Uri.parse("upi://pay?pa=hichauhan.in@okhdfcbank&pn=Himanshu%20Chauhan&cu=INR")
                         val intent = Intent(Intent.ACTION_VIEW, uri)
                         try {
                             contextCurrent.startActivity(Intent.createChooser(intent, "Pay with..."))
