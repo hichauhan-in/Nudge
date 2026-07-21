@@ -224,19 +224,6 @@ class OverlayActivity : ComponentActivity() {
                         )
                     }
 
-                    val launchUpi = {
-                        donateExpanded = false
-                        SessionManager.isDonationFlowActive = true
-                        val uri = android.net.Uri.parse("upi://pay?pa=hichauhan.in@okhdfcbank&pn=Himanshu%20Chauhan&cu=INR")
-                        val intent = Intent(Intent.ACTION_VIEW, uri)
-                        try {
-                            contextCurrent.startActivity(Intent.createChooser(intent, "Pay with..."))
-                        } catch (e: Exception) {
-                            SessionManager.isDonationFlowActive = false
-                            android.widget.Toast.makeText(contextCurrent, "No UPI app found", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    }
-
                     val launchKofi = {
                         donateExpanded = false
                         SessionManager.isDonationFlowActive = true
@@ -276,14 +263,14 @@ class OverlayActivity : ComponentActivity() {
                                 enabled = true,
                                 onClick = { launchKofi() }
                             )
-                            // First (nearest the button): UPI
+                            // First (nearest the button): UPI (disabled for now)
                             DonateOptionChip(
                                 visible = donateExpanded,
                                 delayMillis = 0,
                                 iconRes = com.example.R.drawable.ic_pay_upi,
                                 label = "UPI",
-                                enabled = true,
-                                onClick = { launchUpi() }
+                                enabled = false,
+                                onClick = {}
                             )
                             // Anchor: Donate toggle (rightmost, same size/style as the chips)
                             Row(
@@ -300,14 +287,14 @@ class OverlayActivity : ComponentActivity() {
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Favorite,
-                                    contentDescription = "Donate",
+                                    imageVector = Icons.Default.Coffee,
+                                    contentDescription = "Coffee",
                                     tint = GuardMintAccent,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    "Donate",
+                                    "Coffee?",
                                     color = GuardMintAccent,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,

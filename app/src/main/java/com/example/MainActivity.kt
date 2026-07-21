@@ -1898,7 +1898,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                                 color = Color.White
                             )
                             Text(
-                                text = "Fuel the active independent development of off-grid privacy utilities.",
+                                text = "Fuel the development of utilities.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = GuardTextSecondary
                             )
@@ -2557,7 +2557,8 @@ private fun AppQuotaConfigPanel(item: AppDisplayItem, viewModel: MainViewModel) 
 }
 
 fun launchUpiDonation(context: Context) {
-    val uri = android.net.Uri.parse("upi://pay?pa=hichauhan.in@okhdfcbank&pn=Himanshu%20Chauhan&cu=INR")
+    // UPI disabled for now — no VPA configured (to be wired to a payment portal later).
+    val uri = android.net.Uri.parse("upi://pay?pa=")
     val intent = Intent(Intent.ACTION_VIEW, uri)
     try {
         context.startActivity(Intent.createChooser(intent, "Pay with..."))
@@ -2587,7 +2588,7 @@ private fun SupportOptionsDialog(onDismiss: () -> Unit, onUpi: () -> Unit, onKof
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    text = "Support the developer",
+                    text = "Let's Have a Coffee",
                     fontWeight = FontWeight.Bold,
                     color = Color.White,
                     fontSize = 18.sp,
@@ -2595,7 +2596,7 @@ private fun SupportOptionsDialog(onDismiss: () -> Unit, onUpi: () -> Unit, onKof
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Pick how you'd like to buy me a coffee. More options are on the way.",
+                    text = "Entirely voluntary and unlocks nothing — no extra features and no changes to the app. Nudge! stays completely free and ad-free for everyone, with every feature already included. Think of it as an optional / voluntary gesture, nothing more.",
                     style = MaterialTheme.typography.bodySmall,
                     color = GuardTextSecondary
                 )
@@ -2604,9 +2605,9 @@ private fun SupportOptionsDialog(onDismiss: () -> Unit, onUpi: () -> Unit, onKof
                 PaymentMethodRow(
                     iconRes = R.drawable.ic_pay_upi,
                     name = "UPI",
-                    subtitle = "Instant payment (India)",
-                    enabled = true,
-                    onClick = onUpi
+                    subtitle = "Coming soon",
+                    enabled = false,
+                    onClick = {}
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 PaymentMethodRow(
