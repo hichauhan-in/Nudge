@@ -716,42 +716,42 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
         
         Spacer(modifier = Modifier.height(12.dp))
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        Card(
+            colors = CardDefaults.cardColors(containerColor = GuardSurface),
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(20.dp))
         ) {
-            StatCard(
-                modifier = Modifier.weight(1f),
-                title = "Total Open Count",
-                value = stats.totalMindfulPauses.toString(),
-                icon = Icons.Default.TouchApp
-            )
-            StatCard(
-                modifier = Modifier.weight(1f),
-                title = "Guarded Apps",
-                value = stats.guardedAppsCount.toString(),
-                icon = Icons.Default.Shield
-            )
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            StatCard(
-                modifier = Modifier.weight(1f),
-                title = "Timer Ignored Count",
-                value = stats.bypassedInterventions.toString(),
-                icon = Icons.Default.TimerOff
-            )
-            StatCard(
-                modifier = Modifier.weight(1f),
-                title = "Early Closed / Resisted",
-                value = stats.recentLogs.count { it.actionTaken == "CLOSED" }.toString(),
-                icon = Icons.Default.CheckCircle
-            )
+            Column {
+                Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+                    MetricGridCell(
+                        icon = Icons.Default.TouchApp,
+                        value = stats.totalMindfulPauses.toString(),
+                        label = "Total Opens"
+                    )
+                    VerticalDivider(color = Color.White.copy(alpha = 0.05f))
+                    MetricGridCell(
+                        icon = Icons.Default.Shield,
+                        value = stats.guardedAppsCount.toString(),
+                        label = "Guarded Apps"
+                    )
+                }
+                HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+                Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+                    MetricGridCell(
+                        icon = Icons.Default.TimerOff,
+                        value = stats.bypassedInterventions.toString(),
+                        label = "Timer Ignored"
+                    )
+                    VerticalDivider(color = Color.White.copy(alpha = 0.05f))
+                    MetricGridCell(
+                        icon = Icons.Default.CheckCircle,
+                        value = stats.recentLogs.count { it.actionTaken == "CLOSED" }.toString(),
+                        label = "Resisted"
+                    )
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -794,7 +794,7 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Your digital footprint never leaves this phone. No telemetry, no external servers—pure focus, in your control.",
+                        text = "Your digital footprint never leaves this phone. No telemetry, no external servers.",
                         style = MaterialTheme.typography.bodySmall,
                         color = GuardTextSecondary,
                         lineHeight = 16.sp
@@ -997,49 +997,38 @@ fun AppIconView(
 }
 
 @Composable
-fun StatCard(modifier: Modifier = Modifier, title: String, value: String, icon: ImageVector) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = GuardSurface),
-        shape = RoundedCornerShape(16.dp),
-        modifier = modifier.border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
+private fun RowScope.MetricGridCell(icon: ImageVector, value: String, label: String) {
+    Column(
+        modifier = Modifier
+            .weight(1f)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            horizontalAlignment = Alignment.Start
-        ) {
-            Row(verticalAlignment = Alignment.Top) {
-                Box(
-                    modifier = Modifier
-                        .size(24.dp)
-                        .background(GuardMintAccent.copy(alpha = 0.10f), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = GuardMintAccent,
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = GuardTextSecondary,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 0.5.sp,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = GuardMintAccent,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
             Text(
-                text = value,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                fontFamily = FontFamily.Monospace
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = GuardTextSecondary,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 0.5.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            fontFamily = FontFamily.Monospace
+        )
     }
 }
 
