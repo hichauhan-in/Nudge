@@ -716,42 +716,32 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
         
         Spacer(modifier = Modifier.height(12.dp))
 
-        Card(
-            colors = CardDefaults.cardColors(containerColor = GuardSurface),
-            shape = RoundedCornerShape(20.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(20.dp))
+        // Metrics — three compact tiles that fit the screen (no horizontal scroll)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Column {
-                Row(modifier = Modifier.height(IntrinsicSize.Min)) {
-                    MetricGridCell(
-                        icon = Icons.Default.TouchApp,
-                        value = stats.totalMindfulPauses.toString(),
-                        label = "Total Opens"
-                    )
-                    VerticalDivider(color = Color.White.copy(alpha = 0.05f))
-                    MetricGridCell(
-                        icon = Icons.Default.Shield,
-                        value = stats.guardedAppsCount.toString(),
-                        label = "Guarded Apps"
-                    )
-                }
-                HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
-                Row(modifier = Modifier.height(IntrinsicSize.Min)) {
-                    MetricGridCell(
-                        icon = Icons.Default.TimerOff,
-                        value = stats.bypassedInterventions.toString(),
-                        label = "Timer Ignored"
-                    )
-                    VerticalDivider(color = Color.White.copy(alpha = 0.05f))
-                    MetricGridCell(
-                        icon = Icons.Default.CheckCircle,
-                        value = stats.recentLogs.count { it.actionTaken == "CLOSED" }.toString(),
-                        label = "Resisted"
-                    )
-                }
-            }
+            MetricTile(
+                modifier = Modifier.weight(1f),
+                icon = Icons.Default.TouchApp,
+                value = stats.totalMindfulPauses.toString(),
+                label = "Total Opens",
+                accent = if (isSarcasticMode) Color(0xFFEF5350) else GuardMintAccent
+            )
+            MetricTile(
+                modifier = Modifier.weight(1f),
+                icon = Icons.Default.Shield,
+                value = stats.guardedAppsCount.toString(),
+                label = "Guarded Apps",
+                accent = if (isSarcasticMode) Color(0xFFEF5350) else Color(0xFF81D4FA)
+            )
+            MetricTile(
+                modifier = Modifier.weight(1f),
+                icon = Icons.Default.TimerOff,
+                value = stats.bypassedInterventions.toString(),
+                label = "Timer Ignored",
+                accent = Color(0xFFEF5350)
+            )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -997,38 +987,47 @@ fun AppIconView(
 }
 
 @Composable
-private fun RowScope.MetricGridCell(icon: ImageVector, value: String, label: String) {
-    Column(
-        modifier = Modifier
-            .weight(1f)
-            .padding(horizontal = 16.dp, vertical = 14.dp)
+private fun MetricTile(icon: ImageVector, value: String, label: String, accent: Color, modifier: Modifier = Modifier) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = GuardSurface),
+        shape = RoundedCornerShape(18.dp),
+        modifier = modifier
+            .border(BorderStroke(1.dp, accent.copy(alpha = 0.18f)), RoundedCornerShape(18.dp))
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = GuardMintAccent,
-                modifier = Modifier.size(14.dp)
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp)) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .background(accent.copy(alpha = 0.10f), RoundedCornerShape(9.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = accent,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1
             )
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = label,
-                style = MaterialTheme.typography.labelSmall,
                 color = GuardTextSecondary,
+                fontSize = 10.sp,
                 fontFamily = FontFamily.Monospace,
                 letterSpacing = 0.5.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = value,
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            color = Color.White,
-            fontFamily = FontFamily.Monospace
-        )
     }
 }
 
