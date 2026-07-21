@@ -421,10 +421,16 @@ fun MainScreen() {
             containerColor = GuardBlack,
             bottomBar = {
                 if (currentScreen != NavigationScreen.AppInfo) {
+                    // Keep the black bar tight around the buttons: shrink its content height so the
+                    // top border sits just a few px above the icons, while still reserving room for
+                    // the system gesture bar inset at the bottom.
+                    val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
                     NavigationBar(
                         containerColor = GuardBlack,
                         tonalElevation = 0.dp,
-                        modifier = Modifier.border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                        modifier = Modifier
+                            .height(60.dp + bottomInset)
+                            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
                     ) {
                         NavigationBarItem(
                             selected = currentScreen == NavigationScreen.Dashboard,
@@ -2136,13 +2142,13 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "App Version",
+                                text = "App Specific Information",
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White,
                                 fontFamily = FontFamily.Monospace
                             )
                             Text(
-                                text = "v2.1.1",
+                                text = "Lets Understand Nudge!",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = GuardTextSecondary,
                                 fontFamily = FontFamily.Monospace
@@ -2758,7 +2764,7 @@ private fun SupportOptionsDialog(onDismiss: () -> Unit, onUpi: () -> Unit, onKof
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Entirely voluntary and unlocks nothing — no extra features and no changes to the app. Nudge! stays completely free and ad-free for everyone, with every feature already included. Think of it as an optional / voluntary gesture, nothing more.",
+                    text = "Entirely voluntary and unlocks nothing - no extra features and no changes to the app. Nudge! stays completely free and ad-free for everyone, with every feature already included. Think of it as an optional/voluntary gesture, nothing more.",
                     style = MaterialTheme.typography.bodySmall,
                     color = GuardTextSecondary,
                     fontFamily = FontFamily.Default,
@@ -2776,8 +2782,8 @@ private fun SupportOptionsDialog(onDismiss: () -> Unit, onUpi: () -> Unit, onKof
                 Spacer(modifier = Modifier.height(10.dp))
                 PaymentMethodRow(
                     iconRes = R.drawable.ic_pay_kofi,
-                    name = "Ko-fi",
-                    subtitle = "Buy me a coffee (cards, PayPal)",
+                    name = "Ko-Fi",
+                    subtitle = "Share some Ko-Fi",
                     enabled = true,
                     onClick = onKofi
                 )
