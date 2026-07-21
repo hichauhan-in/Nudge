@@ -746,6 +746,11 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // Weekly progress summary — best day, resisted count, and screen time over the last 7 days
+        WeeklySummaryCard(stats)
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         // On-Device and Offline Guarantee (Cybersecurity Aesthetic)
         Card(
             colors = CardDefaults.cardColors(containerColor = GuardSurface),
@@ -792,11 +797,6 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                 }
             }
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Weekly progress summary — best day, resisted count, and screen time over the last 7 days
-        WeeklySummaryCard(stats)
 
         Spacer(modifier = Modifier.height(32.dp))
 
