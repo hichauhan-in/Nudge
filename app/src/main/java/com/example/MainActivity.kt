@@ -435,7 +435,7 @@ fun MainScreen() {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(60.dp + bottomInset)
+                                .height(72.dp + bottomInset)
                                 .background(GuardBlack)
                                 .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
                                 .clickable { currentScreen = NavigationScreen.Settings }
@@ -463,7 +463,7 @@ fun MainScreen() {
                             containerColor = GuardBlack,
                             tonalElevation = 0.dp,
                             modifier = Modifier
-                                .height(60.dp + bottomInset)
+                                .height(72.dp + bottomInset)
                                 .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
                         ) {
                             NavigationBarItem(
@@ -764,21 +764,21 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                 modifier = Modifier.weight(1f),
                 icon = Icons.Default.TouchApp,
                 value = stats.totalMindfulPauses.toString(),
-                label = "Total Opens",
+                label = if (isSarcasticMode) "Weak Moments" else "Total Opens",
                 accent = if (isSarcasticMode) Color(0xFFEF5350) else GuardMintAccent
             )
             MetricTile(
                 modifier = Modifier.weight(1f),
                 icon = Icons.Default.Shield,
                 value = stats.guardedAppsCount.toString(),
-                label = "Guarded Apps",
+                label = if (isSarcasticMode) "Temptations" else "Guarded Apps",
                 accent = if (isSarcasticMode) Color(0xFFEF5350) else Color(0xFF81D4FA)
             )
             MetricTile(
                 modifier = Modifier.weight(1f),
                 icon = Icons.Default.TimerOff,
                 value = stats.bypassedInterventions.toString(),
-                label = "Timer Ignored",
+                label = if (isSarcasticMode) "Times Caved" else "Timer Ignored",
                 accent = Color(0xFFEF5350)
             )
         }
@@ -1901,6 +1901,49 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
             var useBlurredBackground by remember { mutableStateOf(prefs.getBoolean("use_blurred_background", false)) }
             var sarcasticMode by remember { mutableStateOf(prefs.getBoolean("sarcastic_mode", false)) }
 
+            // Blurred prompt background — neutral card, independent of sarcastic mode.
+            Card(
+                colors = CardDefaults.cardColors(containerColor = GuardSurface),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Blurred Prompt Background",
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Use a blurred background instead of solid black",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = GuardTextSecondary
+                        )
+                    }
+                    androidx.compose.material3.Switch(
+                        checked = useBlurredBackground,
+                        onCheckedChange = {
+                            useBlurredBackground = it
+                            prefs.edit().putBoolean("use_blurred_background", it).apply()
+                        },
+                        colors = androidx.compose.material3.SwitchDefaults.colors(
+                            checkedThumbColor = GuardMintAccent,
+                            checkedTrackColor = GuardMintAccent.copy(alpha = 0.5f)
+                        )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Sarcastic mode — turns red only when enabled, entirely on its own.
             Card(
                 colors = CardDefaults.cardColors(containerColor = if (sarcasticMode) Color.Red.copy(alpha = 0.15f) else GuardSurface),
                 shape = RoundedCornerShape(16.dp),
@@ -1908,70 +1951,35 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                     .fillMaxWidth()
                     .border(BorderStroke(1.dp, if (sarcasticMode) Color.Red.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
             ) {
-                Column {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Blurred Prompt Background",
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                            Text(
-                                text = "Use a blurred background instead of solid black",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = GuardTextSecondary
-                            )
-                        }
-                        androidx.compose.material3.Switch(
-                            checked = useBlurredBackground,
-                            onCheckedChange = { 
-                                useBlurredBackground = it
-                                prefs.edit().putBoolean("use_blurred_background", it).apply()
-                            },
-                            colors = androidx.compose.material3.SwitchDefaults.colors(
-                                checkedThumbColor = GuardMintAccent,
-                                checkedTrackColor = GuardMintAccent.copy(alpha = 0.5f)
-                            )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Sarcastic Mode",
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = if (sarcasticMode) "No more Mr. Nice App. You asked for this." else "Enable snarky remarks and sarcastic interventions",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (sarcasticMode) Color(0xFFEF5350).copy(alpha = 0.9f) else GuardTextSecondary
                         )
                     }
-
-                    androidx.compose.material3.HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Sarcastic Mode",
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                            Text(
-                                text = "Enable snarky remarks and sarcastic interventions",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = GuardTextSecondary
-                            )
-                        }
-                        androidx.compose.material3.Switch(
-                            checked = sarcasticMode,
-                            onCheckedChange = { isChecked -> 
-                                sarcasticMode = isChecked
-                                prefs.edit().putBoolean("sarcastic_mode", isChecked).apply()
-                            },
-                            colors = androidx.compose.material3.SwitchDefaults.colors(
-                                checkedThumbColor = GuardMintAccent,
-                                checkedTrackColor = GuardMintAccent.copy(alpha = 0.5f)
-                            )
+                    androidx.compose.material3.Switch(
+                        checked = sarcasticMode,
+                        onCheckedChange = { isChecked ->
+                            sarcasticMode = isChecked
+                            prefs.edit().putBoolean("sarcastic_mode", isChecked).apply()
+                        },
+                        colors = androidx.compose.material3.SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = Color.Red.copy(alpha = 0.7f)
                         )
-                    }
+                    )
                 }
             }
 
@@ -3710,7 +3718,7 @@ fun AppUsageInsightCard(stats: DashboardStats, modifier: Modifier = Modifier, is
             ) {
                 Column {
                     Text(
-                        text = "APP USAGE",
+                        text = if (isSarcasticMode) "TIME WASTED" else "APP USAGE",
                         style = MaterialTheme.typography.labelSmall.copy(
                             color = GuardTextSecondary,
                             fontWeight = FontWeight.Bold,
@@ -3757,7 +3765,12 @@ fun AppUsageInsightCard(stats: DashboardStats, modifier: Modifier = Modifier, is
                     .take(3)
                 if (appTimes.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No usage on this day.", color = GuardTextSecondary, fontSize = 14.sp)
+                        Text(
+                            if (isSarcasticMode) "Nothing wasted here. Suspicious." else "No usage on this day.",
+                            color = GuardTextSecondary,
+                            fontSize = 14.sp,
+                            textAlign = TextAlign.Center
+                        )
                     }
                 } else {
                     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
@@ -3815,7 +3828,7 @@ fun InterventionBehaviorCard(stats: DashboardStats, modifier: Modifier = Modifie
             ) {
                 Column {
                     Text(
-                        text = if (isSarcasticMode) "PATHETIC BEHAVIOR" else "INTERVENTION BEHAVIOR",
+                        text = if (isSarcasticMode) "WILLPOWER AUDIT" else "INTERVENTION BEHAVIOR",
                         style = MaterialTheme.typography.labelSmall.copy(
                             color = GuardTextSecondary,
                             fontWeight = FontWeight.Bold,
@@ -3868,11 +3881,20 @@ fun InterventionBehaviorCard(stats: DashboardStats, modifier: Modifier = Modifie
                     score >= 50 -> Color(0xFF81D4FA)
                     else -> Color(0xFFEF5350)
                 }
-                val scoreLabel = when {
-                    total == 0 -> "No intercepts on this day"
-                    score >= 80 -> "Strong self-control"
-                    score >= 50 -> "Holding the line"
-                    else -> "Room to improve"
+                val scoreLabel = if (isSarcasticMode) {
+                    when {
+                        total == 0 -> "Nothing to judge... yet"
+                        score >= 80 -> "Ugh, fine. Impressive."
+                        score >= 50 -> "Barely holding on"
+                        else -> "Zero willpower detected"
+                    }
+                } else {
+                    when {
+                        total == 0 -> "No intercepts on this day"
+                        score >= 80 -> "Strong self-control"
+                        score >= 50 -> "Holding the line"
+                        else -> "Room to improve"
+                    }
                 }
                 val animatedScore by androidx.compose.animation.core.animateIntAsState(
                     targetValue = score,
@@ -3909,7 +3931,7 @@ fun InterventionBehaviorCard(stats: DashboardStats, modifier: Modifier = Modifie
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Boundary respect rate",
+                            text = if (isSarcasticMode) "How often you behaved" else "Boundary respect rate",
                             color = GuardTextSecondary,
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace
