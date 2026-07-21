@@ -420,57 +420,92 @@ fun MainScreen() {
         Scaffold(
             containerColor = GuardBlack,
             bottomBar = {
-                if (currentScreen != NavigationScreen.AppInfo) {
-                    // Keep the black bar tight around the buttons: shrink its content height so the
-                    // top border sits just a few px above the icons, while still reserving room for
-                    // the system gesture bar inset at the bottom.
-                    val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-                    NavigationBar(
-                        containerColor = GuardBlack,
-                        tonalElevation = 0.dp,
-                        modifier = Modifier
-                            .height(60.dp + bottomInset)
-                            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
-                    ) {
-                        NavigationBarItem(
-                            selected = currentScreen == NavigationScreen.Dashboard,
-                            onClick = { currentScreen = NavigationScreen.Dashboard },
-                            icon = { Icon(Icons.Default.Home, contentDescription = "Dashboard") },
-                            label = { Text("Home") },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = GuardBlack,
-                                selectedTextColor = GuardMintAccent,
-                                indicatorColor = GuardMintAccent,
-                                unselectedIconColor = GuardTextSecondary,
-                                unselectedTextColor = GuardTextSecondary
+                // Keep the black bar tight around the buttons: shrink its content height so the
+                // top border sits just a few px above the icons, while still reserving room for
+                // the system gesture bar inset at the bottom.
+                val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+                // The info screen reuses the exact same bar footprint: instead of hiding the nav
+                // bar (which made the layout jump), we cross-fade its three buttons into a matching
+                // "Back" bar so the transition stays smooth and in place.
+                Crossfade(
+                    targetState = currentScreen == NavigationScreen.AppInfo,
+                    label = "BottomBarTransition"
+                ) { isAppInfo ->
+                    if (isAppInfo) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(60.dp + bottomInset)
+                                .background(GuardBlack)
+                                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                                .clickable { currentScreen = NavigationScreen.Settings }
+                                .padding(bottom = bottomInset),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = "Back to Settings",
+                                    tint = GuardMintAccent
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Back",
+                                    color = GuardMintAccent,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.sp
+                                )
+                            }
+                        }
+                    } else {
+                        NavigationBar(
+                            containerColor = GuardBlack,
+                            tonalElevation = 0.dp,
+                            modifier = Modifier
+                                .height(60.dp + bottomInset)
+                                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                        ) {
+                            NavigationBarItem(
+                                selected = currentScreen == NavigationScreen.Dashboard,
+                                onClick = { currentScreen = NavigationScreen.Dashboard },
+                                icon = { Icon(Icons.Default.Home, contentDescription = "Dashboard") },
+                                label = { Text("Home") },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = GuardBlack,
+                                    selectedTextColor = GuardMintAccent,
+                                    indicatorColor = GuardMintAccent,
+                                    unselectedIconColor = GuardTextSecondary,
+                                    unselectedTextColor = GuardTextSecondary
+                                )
                             )
-                        )
-                        NavigationBarItem(
-                            selected = currentScreen == NavigationScreen.MonitoredApps,
-                            onClick = { currentScreen = NavigationScreen.MonitoredApps },
-                            icon = { Icon(Icons.Default.Lock, contentDescription = "Interceptions") },
-                            label = { Text("Monitor") },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = GuardBlack,
-                                selectedTextColor = GuardMintAccent,
-                                indicatorColor = GuardMintAccent,
-                                unselectedIconColor = GuardTextSecondary,
-                                unselectedTextColor = GuardTextSecondary
+                            NavigationBarItem(
+                                selected = currentScreen == NavigationScreen.MonitoredApps,
+                                onClick = { currentScreen = NavigationScreen.MonitoredApps },
+                                icon = { Icon(Icons.Default.Lock, contentDescription = "Interceptions") },
+                                label = { Text("Monitor") },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = GuardBlack,
+                                    selectedTextColor = GuardMintAccent,
+                                    indicatorColor = GuardMintAccent,
+                                    unselectedIconColor = GuardTextSecondary,
+                                    unselectedTextColor = GuardTextSecondary
+                                )
                             )
-                        )
-                        NavigationBarItem(
-                            selected = currentScreen == NavigationScreen.Settings,
-                            onClick = { currentScreen = NavigationScreen.Settings },
-                            icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
-                            label = { Text("Configure") },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = GuardBlack,
-                                selectedTextColor = GuardMintAccent,
-                                indicatorColor = GuardMintAccent,
-                                unselectedIconColor = GuardTextSecondary,
-                                unselectedTextColor = GuardTextSecondary
+                            NavigationBarItem(
+                                selected = currentScreen == NavigationScreen.Settings,
+                                onClick = { currentScreen = NavigationScreen.Settings },
+                                icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
+                                label = { Text("Configure") },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = GuardBlack,
+                                    selectedTextColor = GuardMintAccent,
+                                    indicatorColor = GuardMintAccent,
+                                    unselectedIconColor = GuardTextSecondary,
+                                    unselectedTextColor = GuardTextSecondary
+                                )
                             )
-                        )
+                        }
                     }
                 }
             },
@@ -488,9 +523,7 @@ fun MainScreen() {
                         NavigationScreen.Settings -> SettingsView(viewModel, isServiceEnabled, context) {
                             currentScreen = NavigationScreen.AppInfo
                         }
-                        NavigationScreen.AppInfo -> HowItWorksScrollView {
-                            currentScreen = NavigationScreen.Settings
-                        }
+                        NavigationScreen.AppInfo -> HowItWorksScrollView()
                     }
                 }
             }
@@ -2169,7 +2202,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
 }
 
 @Composable
-fun HowItWorksScrollView(onBack: () -> Unit) {
+fun HowItWorksScrollView() {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -2178,45 +2211,26 @@ fun HowItWorksScrollView(onBack: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = 80.dp)
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Back action bar
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier
-                        .background(Color.White.copy(alpha = 0.05f), CircleShape)
-                        .size(40.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back to Settings",
-                        tint = GuardMintAccent
-                    )
-                }
-                Spacer(modifier = Modifier.width(16.dp))
-                Column {
-                    Text(
-                        text = "Security & Mechanics",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    Text(
-                        text = "Under the hood of Nudge!",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = GuardTextSecondary,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
+            // Screen title (the back action lives in the bottom bar, replacing the nav buttons)
+            Column {
+                Text(
+                    text = "Security & Mechanics",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    fontFamily = FontFamily.Monospace
+                )
+                Text(
+                    text = "Under the hood of Nudge!",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = GuardTextSecondary,
+                    fontFamily = FontFamily.Monospace
+                )
             }
 
             Spacer(modifier = Modifier.height(28.dp))
