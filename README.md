@@ -163,7 +163,7 @@ cd nudge
 | **Accessibility Service** | Detects which app comes to the foreground so it can prompt you. Never reads or transmits screen content. |
 | **Foreground Service** _(special use)_ | Keeps timers running reliably in the background. |
 | **Post Notifications** | Shows the optional live‑timer banner (off by default). |
-| **Query All Packages** | Lists your installed apps so you can choose which to guard. |
+| **Package Visibility** _(scoped)_ | Sees only your launchable apps so you can choose which to guard — uses Android's scoped package‑visibility (`<queries>`), **not** the broad “query all packages” access. |
 
 ---
 
