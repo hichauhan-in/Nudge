@@ -756,11 +756,6 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Weekly progress summary — best day, resisted count, and screen time over the last 7 days
-        WeeklySummaryCard(stats)
-
-        Spacer(modifier = Modifier.height(16.dp))
-
         // On-Device and Offline Guarantee (Cybersecurity Aesthetic)
         Card(
             colors = CardDefaults.cardColors(containerColor = GuardSurface),
@@ -807,6 +802,11 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                 }
             }
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Weekly progress summary — best day, resisted count, and screen time over the last 7 days
+        WeeklySummaryCard(stats)
 
         Spacer(modifier = Modifier.height(32.dp))
 
@@ -3873,14 +3873,73 @@ fun InterventionBehaviorCard(stats: DashboardStats, modifier: Modifier = Modifie
                 val closedCount = actionCounts["CLOSED"] ?: 0
                 val bypassedCount = actionCounts["BYPASSED"] ?: 0
                 val completedCount = (actionCounts["COMPLETED"] ?: 0) + (actionCounts["EXTENDED"] ?: 0)
-                val totalActions = (closedCount + completedCount + bypassedCount).coerceAtLeast(1)
+                val total = closedCount + completedCount + bypassedCount
+                // "Mindful" = you honoured the boundary (closed early or let the limit complete);
+                // bypassing means you overrode it. The score is how often you respected your own limits.
+                val mindful = closedCount + completedCount
+                val score = if (total > 0) (mindful * 100 / total) else 0
+                val scoreColor = when {
+                    total == 0 -> GuardTextSecondary
+                    score >= 80 -> GuardMintAccent
+                    score >= 50 -> Color(0xFF81D4FA)
+                    else -> Color(0xFFEF5350)
+                }
+                val scoreLabel = when {
+                    total == 0 -> "No intercepts on this day"
+                    score >= 80 -> "Strong self-control"
+                    score >= 50 -> "Holding the line"
+                    else -> "Room to improve"
+                }
+                val animatedScore by androidx.compose.animation.core.animateIntAsState(
+                    targetValue = score,
+                    animationSpec = androidx.compose.animation.core.tween(600, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                    label = "behaviorScore"
+                )
                 Column(
                     modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.SpaceEvenly
+                    verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    BehaviorRow("Early Closed / Resisted", closedCount, totalActions, GuardMintAccent)
-                    BehaviorRow("Completed Limits", completedCount, totalActions, Color(0xFF81D4FA))
-                    BehaviorRow("Bypassed Limits", bypassedCount, totalActions, Color(0xFFEF5350))
+                    Column {
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            Text(
+                                text = if (total == 0) "—" else animatedScore.toString(),
+                                fontSize = 46.sp,
+                                fontWeight = FontWeight.Light,
+                                color = Color.White,
+                                lineHeight = 46.sp
+                            )
+                            if (total > 0) {
+                                Text(
+                                    text = "%",
+                                    fontSize = 18.sp,
+                                    color = GuardTextSecondary,
+                                    modifier = Modifier.padding(bottom = 6.dp, start = 2.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = scoreLabel,
+                            color = scoreColor,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Boundary respect rate",
+                            color = GuardTextSecondary,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        BehaviorStat("Resisted", closedCount, GuardMintAccent)
+                        BehaviorStat("Completed", completedCount, Color(0xFF81D4FA))
+                        BehaviorStat("Bypassed", bypassedCount, Color(0xFFEF5350))
+                    }
                 }
             }
 
@@ -3892,20 +3951,31 @@ fun InterventionBehaviorCard(stats: DashboardStats, modifier: Modifier = Modifie
 }
 
 @Composable
-fun BehaviorRow(label: String, count: Int, total: Int, color: Color) {
-    val percentage = if (total > 0) count.toFloat() / total else 0f
-    Column {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(text = label, color = Color.White, fontSize = 14.sp)
-            Text(text = "$count", color = Color.White, fontSize = 14.sp)
+fun BehaviorStat(label: String, count: Int, color: Color) {
+    Column(horizontalAlignment = Alignment.Start) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(color, CircleShape)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = count.toString(),
+                color = Color.White,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
+            )
         }
-        Spacer(modifier = Modifier.height(4.dp))
-        Box(modifier = Modifier.fillMaxWidth().height(6.dp).background(Color.White.copy(alpha=0.05f), CircleShape)) {
-            Box(modifier = Modifier.fillMaxWidth(percentage).fillMaxHeight().background(color, CircleShape))
-        }
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = label,
+            color = GuardTextSecondary,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            letterSpacing = 0.5.sp
+        )
     }
 }
 
