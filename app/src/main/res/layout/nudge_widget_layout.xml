@@ -24,11 +24,13 @@
             android:id="@+id/widget_title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
+            android:layout_marginStart="8dp"
             android:text="Nudge!"
             android:textColor="#FFFFFF"
             android:textSize="14sp"
-            android:textStyle="bold" />
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.05" />
     </LinearLayout>
 
     <!-- Support divider using FrameLayout since standard generic View tag is not on RemoteViews allowed list -->
@@ -36,9 +38,9 @@
         android:id="@+id/widget_divider"
         android:layout_width="match_parent"
         android:layout_height="1dp"
-        android:background="#22FFFFFF"
-        android:layout_marginTop="8dp"
-        android:layout_marginBottom="8dp" />
+        android:background="#1FFFFFFF"
+        android:layout_marginTop="10dp"
+        android:layout_marginBottom="10dp" />
 
     <!-- Centered Metric stats section (stretches and centers content as parent widget resizes) -->
     <LinearLayout
@@ -53,9 +55,11 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:text="MINDFUL USAGE"
-            android:textColor="#A0A0A0"
+            android:textColor="#A5D6A7"
             android:textSize="11sp"
-            android:textStyle="bold" />
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.15" />
 
         <TextView
             android:id="@+id/widget_pauses_count"
@@ -66,11 +70,12 @@
             android:textColor="#FFFFFF"
             android:textSize="22sp"
             android:textStyle="bold"
+            android:fontFamily="monospace"
             android:maxLines="1"
             android:autoSizeTextType="uniform"
             android:autoSizeMinTextSize="14sp"
             android:autoSizeMaxTextSize="38sp"
-            android:layout_marginTop="4dp" />
+            android:layout_marginTop="6dp" />
 
         <TextView
             android:id="@+id/widget_savings"
@@ -80,11 +85,12 @@
             android:text="-- minutes saved"
             android:textColor="#A5D6A7"
             android:textSize="12sp"
+            android:fontFamily="monospace"
             android:maxLines="1"
             android:autoSizeTextType="uniform"
             android:autoSizeMinTextSize="10sp"
             android:autoSizeMaxTextSize="18sp"
-            android:layout_marginTop="2dp" />
+            android:layout_marginTop="4dp" />
 
     </LinearLayout>
 
@@ -93,10 +99,12 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center"
-        android:text="Tap to see boundaries"
-        android:textColor="#55FFFFFF"
-        android:layout_marginTop="6dp"
-        android:textSize="11sp" />
+        android:text="TAP TO SEE BOUNDARIES"
+        android:textColor="#66FFFFFF"
+        android:layout_marginTop="8dp"
+        android:textSize="10sp"
+        android:fontFamily="monospace"
+        android:letterSpacing="0.1" />
 
 </LinearLayout>
 

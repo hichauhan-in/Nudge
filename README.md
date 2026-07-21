@@ -74,7 +74,10 @@ Open a guarded app  ─►  Mindful Prompt: "Commit to a healthy limit"
 - 😏 **Sarcastic Mode** — swap gentle encouragement for savage, escalating snark.
 - 🌫️ **Blurred prompt background** — an optional frosted look for the intervention screen.
 - 📊 **Day‑wise insights** — a swipeable dashboard: pick any of the last 7 days to see total usage, per‑app breakdowns, and your intervention behavior (completed vs. early‑closed vs. bypassed).
-- ❤️ **Support the developer** — an optional in‑app tip jar (UPI & Ko‑fi).
+- 📅 **Weekly summary** — an at‑a‑glance card with your best day, total resisted opens, and screen time across the last 7 days.
+- 🧿 **Quota rings & polished prompts** — the intervention and Monitor screens show a thin circular used‑vs‑quota ring, backed by subtle motion, light haptics, and a soft scale‑in entrance.
+- 🧩 **Home‑screen widget** — a compact, on‑brand widget (rounded, mint‑accented, monospace) showing your mindful stats at a glance.
+- ☕ **Buy me a coffee** — a completely optional, voluntary tip jar (Ko‑fi). It unlocks nothing: every feature is already free, and the app stays ad‑free.
 - 🔕 **Runs on device** — powered by Android's Accessibility Service + a lightweight foreground service that keeps your timers alive.
 
 ---
@@ -117,7 +120,8 @@ Nudge is built to be trustworthy by design:
 
 - **100% on‑device** — usage data, timers and logs never leave your phone.
 - **No servers, no telemetry, no analytics, no ads.**
-- **Works fully offline.**
+- **No Internet permission and no networking libraries bundled** — the app literally cannot send your data anywhere.
+- **Works fully offline.** The only cloud touchpoint is Google Play's optional _In‑App Review_ dialog, handled entirely by Play.
 - Uses the Accessibility Service **only** to detect which app is in the foreground — it does not read, store, or transmit screen content.
 
 ---
@@ -166,8 +170,7 @@ cd nudge
 ## 🗺️ Roadmap ideas
 
 - Per‑app schedules (e.g. quotas that apply only on weekdays)
-- Weekly mindful‑usage summary
-- Home‑screen widget refinements
+- A payment portal for regional (UPI) tipping
 - Localization
 
 ---

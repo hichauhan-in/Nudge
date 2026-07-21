@@ -25,7 +25,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -103,6 +112,20 @@ class OverlayActivity : ComponentActivity() {
                 triggerHomeMinimize()
             }
 
+            // Deliberate "pause" entrance: quick scale-in + fade so the prompt doesn't pop harshly
+            var contentVisible by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) { contentVisible = true }
+            val entranceScale by animateFloatAsState(
+                targetValue = if (contentVisible) 1f else 0.92f,
+                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
+                label = "overlayScale"
+            )
+            val entranceAlpha by animateFloatAsState(
+                targetValue = if (contentVisible) 1f else 0f,
+                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
+                label = "overlayAlpha"
+            )
+
             val quotaActive = sessionState is SessionState.QuotaExhausted
             Box(
                 modifier = Modifier
@@ -119,6 +142,11 @@ class OverlayActivity : ComponentActivity() {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = entranceScale
+                            scaleY = entranceScale
+                            alpha = entranceAlpha
+                        }
                         .padding(if (useBlurredBackground) 16.dp else 24.dp)
                         .padding(bottom = 56.dp), // add spacing so design elements don't overlap with the bottom donate button
                     contentAlignment = Alignment.Center
@@ -286,12 +314,20 @@ class OverlayActivity : ComponentActivity() {
                                     .padding(horizontal = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Coffee,
-                                    contentDescription = "Coffee",
-                                    tint = GuardMintAccent,
-                                    modifier = Modifier.size(16.dp)
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(RoundedCornerShape(7.dp))
+                                        .background(Color.White),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Coffee,
+                                        contentDescription = "Coffee",
+                                        tint = Color(0xFF6F4E37),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     "Coffee?",
@@ -388,34 +424,89 @@ private fun QuotaRemainingSection(packageName: String) {
     val remaining = remember(packageName) { SessionManager.getQuotaRemainingMinutes(packageName) }
     val exceeded = remaining <= 0
     val accent = if (exceeded) Color(0xFFEF5350) else GuardMintAccent
+    val usedFraction = ((quota - remaining).toFloat() / quota).coerceIn(0f, 1f)
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(20.dp))
-                .background(accent.copy(alpha = 0.10f))
-                .border(BorderStroke(1.dp, accent.copy(alpha = 0.30f)), RoundedCornerShape(20.dp))
-                .padding(horizontal = 14.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = if (exceeded) Icons.Default.Warning else Icons.Default.Timer,
-                contentDescription = null,
-                tint = accent,
-                modifier = Modifier.size(14.dp)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text = if (exceeded) "Daily quota spent" else "$remaining min left in daily quota",
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            QuotaRing(
+                fraction = usedFraction,
                 color = accent,
-                fontSize = 12.sp,
+                diameter = 40.dp,
+                stroke = 4.dp
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(accent.copy(alpha = 0.10f))
+                    .border(BorderStroke(1.dp, accent.copy(alpha = 0.30f)), RoundedCornerShape(20.dp))
+                    .padding(horizontal = 14.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = if (exceeded) Icons.Default.Warning else Icons.Default.Timer,
+                    contentDescription = null,
+                    tint = accent,
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (exceeded) "Daily quota spent" else "$remaining min left in daily quota",
+                    color = accent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(20.dp))
+    }
+}
+
+@Composable
+private fun QuotaRing(
+    fraction: Float,
+    color: Color,
+    modifier: Modifier = Modifier,
+    diameter: Dp = 44.dp,
+    stroke: Dp = 4.dp,
+    label: String? = null
+) {
+    Box(modifier = modifier.size(diameter), contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val strokePx = stroke.toPx()
+            val inset = strokePx / 2f
+            val arcSize = Size(size.width - strokePx, size.height - strokePx)
+            drawArc(
+                color = Color.White.copy(alpha = 0.08f),
+                startAngle = -90f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = Offset(inset, inset),
+                size = arcSize,
+                style = Stroke(width = strokePx, cap = StrokeCap.Round)
+            )
+            drawArc(
+                color = color,
+                startAngle = -90f,
+                sweepAngle = 360f * fraction.coerceIn(0f, 1f),
+                useCenter = false,
+                topLeft = Offset(inset, inset),
+                size = arcSize,
+                style = Stroke(width = strokePx, cap = StrokeCap.Round)
+            )
+        }
+        if (label != null) {
+            Text(
+                text = label,
+                color = color,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace
             )
         }
-        Spacer(modifier = Modifier.height(20.dp))
     }
 }
 
@@ -451,6 +542,7 @@ fun DurationSelectionScreen(
 ) {
     var customMinutes by remember { mutableStateOf(5f) }
     var showBypassAlert by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
 
     if (showBypassAlert) {
         androidx.compose.material3.AlertDialog(
@@ -523,6 +615,7 @@ fun DurationSelectionScreen(
             listOf(2, 5, 10, 20).forEach { mins ->
                 Button(
                     onClick = { 
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         if (isSarcasticMode && mins > 10) {
                             customMinutes = mins.toFloat()
                         } else {
@@ -587,7 +680,10 @@ fun DurationSelectionScreen(
         Spacer(modifier = Modifier.height(32.dp))
 
         Button(
-            onClick = { onSelected(customMinutes.toInt()) },
+            onClick = { 
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                onSelected(customMinutes.toInt()) 
+            },
             colors = ButtonDefaults.buttonColors(containerColor = GuardMintAccent, contentColor = GuardBlack),
             shape = RoundedCornerShape(24.dp),
             modifier = Modifier

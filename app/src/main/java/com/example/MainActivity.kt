@@ -42,6 +42,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.util.lerp
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -72,6 +75,15 @@ import kotlinx.coroutines.withContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.Dp
+import kotlin.math.absoluteValue
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -516,6 +528,7 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
     val isMasterGuardEnabled by SessionManager.isMasterGuardEnabled.collectAsStateWithLifecycle()
     val prefs = context.getSharedPreferences("focus_time_prefs", Context.MODE_PRIVATE)
     var isSarcasticMode by remember { mutableStateOf(prefs.getBoolean("sarcastic_mode", false)) }
+    val haptics = LocalHapticFeedback.current
 
     Column(
         modifier = Modifier
@@ -559,6 +572,7 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                         shape = RoundedCornerShape(12.dp)
                     )
                     .clickable {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         if (isMasterGuardEnabled && isSarcasticMode) {
                             sarcasticDisableAction = {
                                 SessionManager.setMasterGuardEnabled(false)
@@ -631,15 +645,39 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
         val pagerState = rememberPagerState(initialPage = carouselStartPage, pageCount = { Int.MAX_VALUE })
         
         Column(modifier = Modifier.fillMaxWidth()) {
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxWidth(),
-                pageSpacing = 16.dp
-            ) { page ->
-                when (page % templateCount) {
-                    0 -> MindfulUsageCard(stats, isSarcasticMode = isSarcasticMode)
-                    1 -> AppUsageInsightCard(stats, isSarcasticMode = isSarcasticMode)
-                    else -> InterventionBehaviorCard(stats, isSarcasticMode = isSarcasticMode)
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                // Subtle mint radial glow that lifts the active card off the pure-black background
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(300.dp)
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(GuardMintAccent.copy(alpha = 0.07f), Color.Transparent)
+                            )
+                        )
+                )
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxWidth(),
+                    pageSpacing = 16.dp
+                ) { page ->
+                    val pageOffset = ((pagerState.currentPage - page) + pagerState.currentPageOffsetFraction)
+                        .absoluteValue.coerceIn(0f, 1f)
+                    Box(
+                        modifier = Modifier.graphicsLayer {
+                            val scale = lerp(0.90f, 1f, 1f - pageOffset)
+                            scaleX = scale
+                            scaleY = scale
+                            alpha = lerp(0.4f, 1f, 1f - pageOffset)
+                        }
+                    ) {
+                        when (page % templateCount) {
+                            0 -> MindfulUsageCard(stats, isSarcasticMode = isSarcasticMode)
+                            1 -> AppUsageInsightCard(stats, isSarcasticMode = isSarcasticMode)
+                            else -> InterventionBehaviorCard(stats, isSarcasticMode = isSarcasticMode)
+                        }
+                    }
                 }
             }
             
@@ -685,12 +723,14 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
             StatCard(
                 modifier = Modifier.weight(1f),
                 title = "Total Open Count",
-                value = stats.totalMindfulPauses.toString()
+                value = stats.totalMindfulPauses.toString(),
+                icon = Icons.Default.TouchApp
             )
             StatCard(
                 modifier = Modifier.weight(1f),
                 title = "Guarded Apps",
-                value = stats.guardedAppsCount.toString()
+                value = stats.guardedAppsCount.toString(),
+                icon = Icons.Default.Shield
             )
         }
 
@@ -703,14 +743,21 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
             StatCard(
                 modifier = Modifier.weight(1f),
                 title = "Timer Ignored Count",
-                value = stats.bypassedInterventions.toString()
+                value = stats.bypassedInterventions.toString(),
+                icon = Icons.Default.TimerOff
             )
             StatCard(
                 modifier = Modifier.weight(1f),
                 title = "Early Closed / Resisted",
-                value = stats.recentLogs.count { it.actionTaken == "CLOSED" }.toString()
+                value = stats.recentLogs.count { it.actionTaken == "CLOSED" }.toString(),
+                icon = Icons.Default.CheckCircle
             )
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Weekly progress summary — best day, resisted count, and screen time over the last 7 days
+        WeeklySummaryCard(stats)
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -802,15 +849,48 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                 modifier = Modifier
                     .fillMaxWidth()
                     .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.03f)), RoundedCornerShape(16.dp))
-                    .padding(32.dp),
+                    .padding(vertical = 32.dp, horizontal = 24.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "No intercepts on this day.",
-                    color = GuardTextSecondary,
-                    fontSize = 13.sp,
-                    textAlign = TextAlign.Center
-                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(contentAlignment = Alignment.Center) {
+                        // Soft mint glow halo
+                        Box(
+                            modifier = Modifier
+                                .size(78.dp)
+                                .background(GuardMintAccent.copy(alpha = 0.06f), CircleShape)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(54.dp)
+                                .background(GuardMintAccent.copy(alpha = 0.10f), CircleShape)
+                                .border(BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.25f)), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Shield,
+                                contentDescription = null,
+                                tint = GuardMintAccent,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        text = "No intercepts on this day.",
+                        color = GuardTextSecondary,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "A clean, focused day.",
+                        color = GuardMintAccent.copy(alpha = 0.7f),
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
         } else {
             Card(
@@ -917,7 +997,7 @@ fun AppIconView(
 }
 
 @Composable
-fun StatCard(modifier: Modifier = Modifier, title: String, value: String) {
+fun StatCard(modifier: Modifier = Modifier, title: String, value: String, icon: ImageVector) {
     Card(
         colors = CardDefaults.cardColors(containerColor = GuardSurface),
         shape = RoundedCornerShape(16.dp),
@@ -927,19 +1007,81 @@ fun StatCard(modifier: Modifier = Modifier, title: String, value: String) {
             modifier = Modifier.padding(16.dp),
             horizontalAlignment = Alignment.Start
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelSmall,
-                color = GuardTextSecondary,
-                fontFamily = FontFamily.Monospace,
-                letterSpacing = 0.5.sp
-            )
-            Spacer(modifier = Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.Top) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .background(GuardMintAccent.copy(alpha = 0.10f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = GuardMintAccent,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = GuardTextSecondary,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 0.5.sp,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = value,
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+    }
+}
+
+@Composable
+private fun QuotaRing(
+    fraction: Float,
+    color: Color,
+    modifier: Modifier = Modifier,
+    diameter: Dp = 44.dp,
+    stroke: Dp = 4.dp,
+    label: String? = null
+) {
+    Box(modifier = modifier.size(diameter), contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val strokePx = stroke.toPx()
+            val inset = strokePx / 2f
+            val arcSize = Size(size.width - strokePx, size.height - strokePx)
+            drawArc(
+                color = Color.White.copy(alpha = 0.08f),
+                startAngle = -90f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = Offset(inset, inset),
+                size = arcSize,
+                style = Stroke(width = strokePx, cap = StrokeCap.Round)
+            )
+            drawArc(
+                color = color,
+                startAngle = -90f,
+                sweepAngle = 360f * fraction.coerceIn(0f, 1f),
+                useCenter = false,
+                topLeft = Offset(inset, inset),
+                size = arcSize,
+                style = Stroke(width = strokePx, cap = StrokeCap.Round)
+            )
+        }
+        if (label != null) {
+            Text(
+                text = label,
+                color = color,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace
             )
         }
@@ -1094,19 +1236,27 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(24.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(64.dp)
-                            .background(GuardMintAccent.copy(alpha = 0.08f), CircleShape)
-                            .border(BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.2f)), CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Lock,
-                            contentDescription = "No Guard Shield",
-                            tint = GuardMintAccent,
-                            modifier = Modifier.size(28.dp)
+                    Box(contentAlignment = Alignment.Center) {
+                        // Soft mint glow halo
+                        Box(
+                            modifier = Modifier
+                                .size(92.dp)
+                                .background(GuardMintAccent.copy(alpha = 0.06f), CircleShape)
                         )
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .background(GuardMintAccent.copy(alpha = 0.08f), CircleShape)
+                                .border(BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.2f)), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "No Guard Shield",
+                                tint = GuardMintAccent,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
@@ -2116,7 +2266,8 @@ fun HowItWorksScrollView(onBack: () -> Unit) {
                                 "By introducing an immediate conscious choice with optional timer limits when opening target apps, we break the automatic hand-to-screen muscle memory and shift your mental state from passive consumption to active decision making.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.85f),
-                        lineHeight = 20.sp
+                        fontFamily = FontFamily.Default,
+                        lineHeight = 22.sp
                     )
                 }
             }
@@ -2242,7 +2393,8 @@ fun HowItWorksScrollView(onBack: () -> Unit) {
                                 "• Instant Overlay: If custom guards are active, our overlay blocking layer takes focus immediately, prompting you to decide if opening the app is truly intentional.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.85f),
-                        lineHeight = 20.sp
+                        fontFamily = FontFamily.Default,
+                        lineHeight = 22.sp
                     )
                 }
             }
@@ -2537,12 +2689,34 @@ private fun AppQuotaConfigPanel(item: AppDisplayItem, viewModel: MainViewModel) 
         }
 
         if (quotaMinutes > 0) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Used today: $usedMinutes / $quotaMinutes min",
-                style = MaterialTheme.typography.bodySmall,
-                color = if (usedMinutes >= quotaMinutes) Color(0xFFEF5350) else GuardTextSecondary
-            )
+            Spacer(modifier = Modifier.height(12.dp))
+            val usedFraction = (usedMinutes.toFloat() / quotaMinutes).coerceIn(0f, 1f)
+            val ringColor = if (usedMinutes >= quotaMinutes) Color(0xFFEF5350) else GuardMintAccent
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                QuotaRing(
+                    fraction = usedFraction,
+                    color = ringColor,
+                    diameter = 46.dp,
+                    stroke = 5.dp,
+                    label = "${(usedFraction * 100).toInt()}%"
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = "Used today",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = GuardTextSecondary,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = "$usedMinutes / $quotaMinutes min",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (usedMinutes >= quotaMinutes) Color(0xFFEF5350) else Color.White,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -2598,7 +2772,9 @@ private fun SupportOptionsDialog(onDismiss: () -> Unit, onUpi: () -> Unit, onKof
                 Text(
                     text = "Entirely voluntary and unlocks nothing — no extra features and no changes to the app. Nudge! stays completely free and ad-free for everyone, with every feature already included. Think of it as an optional / voluntary gesture, nothing more.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = GuardTextSecondary
+                    color = GuardTextSecondary,
+                    fontFamily = FontFamily.Default,
+                    lineHeight = 18.sp
                 )
                 Spacer(modifier = Modifier.height(20.dp))
 
@@ -2812,19 +2988,30 @@ fun OnboardingScreen(viewModel: MainViewModel, onFinished: () -> Unit) {
                     Spacer(modifier = Modifier.height(16.dp))
 
                     // Brand Header with beautiful aesthetic
-                    Box(
-                        modifier = Modifier
-                            .size(130.dp)
-                            .background(GuardMintAccent.copy(alpha = 0.12f), RoundedCornerShape(32.dp))
-                            .border(BorderStroke(1.5.dp, GuardMintAccent), RoundedCornerShape(32.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Lock,
-                            contentDescription = "ScreenGuard Logo",
-                            tint = GuardMintAccent,
-                            modifier = Modifier.size(64.dp)
+                    Box(contentAlignment = Alignment.Center) {
+                        Box(
+                            modifier = Modifier
+                                .size(200.dp)
+                                .background(
+                                    Brush.radialGradient(
+                                        colors = listOf(GuardMintAccent.copy(alpha = 0.08f), Color.Transparent)
+                                    )
+                                )
                         )
+                        Box(
+                            modifier = Modifier
+                                .size(130.dp)
+                                .background(GuardMintAccent.copy(alpha = 0.12f), RoundedCornerShape(32.dp))
+                                .border(BorderStroke(1.5.dp, GuardMintAccent), RoundedCornerShape(32.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "ScreenGuard Logo",
+                                tint = GuardMintAccent,
+                                modifier = Modifier.size(64.dp)
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -3235,21 +3422,32 @@ fun WelcomeSplashScreen(onContinue: () -> Unit) {
             Spacer(modifier = Modifier.height(30.dp))
 
             // Glowing Brand Logotype Box
-            Box(
-                modifier = Modifier
-                    .size(140.dp)
-                    .background(GuardMintAccent.copy(alpha = 0.12f), RoundedCornerShape(36.dp))
-                    .border(BorderStroke(1.5.dp, GuardMintAccent), RoundedCornerShape(36.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "N!",
-                    style = MaterialTheme.typography.displayLarge.copy(
-                        color = GuardMintAccent,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
+            Box(contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .size(210.dp)
+                        .background(
+                            Brush.radialGradient(
+                                colors = listOf(GuardMintAccent.copy(alpha = 0.08f), Color.Transparent)
+                            )
+                        )
                 )
+                Box(
+                    modifier = Modifier
+                        .size(140.dp)
+                        .background(GuardMintAccent.copy(alpha = 0.12f), RoundedCornerShape(36.dp))
+                        .border(BorderStroke(1.5.dp, GuardMintAccent), RoundedCornerShape(36.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "N!",
+                        style = MaterialTheme.typography.displayLarge.copy(
+                            color = GuardMintAccent,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -3390,6 +3588,16 @@ private fun DaySelectorBars(
             val minutes = dayMinutes[index]
             val heightFrac = (minutes.toFloat() / maxMin.toFloat()).coerceIn(0.06f, 1f)
             val isSelected = daysAgo == selectedOffset
+            val animatedHeightFrac by animateFloatAsState(
+                targetValue = heightFrac,
+                animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing),
+                label = "barHeight"
+            )
+            val animatedColor by animateColorAsState(
+                targetValue = if (isSelected) GuardMintAccent else Color.White.copy(alpha = if (minutes > 0) 0.12f else 0.04f),
+                animationSpec = tween(durationMillis = 300),
+                label = "barColor"
+            )
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -3401,9 +3609,9 @@ private fun DaySelectorBars(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .fillMaxHeight(heightFrac)
+                        .fillMaxHeight(animatedHeightFrac)
                         .background(
-                            color = if (isSelected) GuardMintAccent else Color.White.copy(alpha = if (minutes > 0) 0.12f else 0.04f),
+                            color = animatedColor,
                             shape = RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp)
                         )
                 )
@@ -3550,17 +3758,19 @@ fun AppUsageInsightCard(stats: DashboardStats, modifier: Modifier = Modifier, is
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            val appTimes = remember(stats.recentLogs, selectedOffset) {
-                logsForDay(stats.recentLogs, selectedOffset)
+            AnimatedContent(
+                targetState = selectedOffset,
+                transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(200)) },
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                label = "appUsageDay"
+            ) { offset ->
+                val appTimes = logsForDay(stats.recentLogs, offset)
                     .groupBy { it.appName }
                     .mapValues { it.value.sumOf { log -> log.durationSeconds } / 60 }
                     .toList()
                     .filter { it.second > 0 }
                     .sortedByDescending { it.second }
                     .take(3)
-            }
-
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 if (appTimes.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("No usage on this day.", color = GuardTextSecondary, fontSize = 14.sp)
@@ -3653,21 +3863,25 @@ fun InterventionBehaviorCard(stats: DashboardStats, modifier: Modifier = Modifie
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            val actionCounts = remember(stats.recentLogs, selectedOffset) {
-                logsForDay(stats.recentLogs, selectedOffset).groupingBy { it.actionTaken }.eachCount()
-            }
-            val closedCount = actionCounts["CLOSED"] ?: 0
-            val bypassedCount = actionCounts["BYPASSED"] ?: 0
-            val completedCount = (actionCounts["COMPLETED"] ?: 0) + (actionCounts["EXTENDED"] ?: 0)
-            val totalActions = (closedCount + completedCount + bypassedCount).coerceAtLeast(1)
-
-            Column(
+            AnimatedContent(
+                targetState = selectedOffset,
+                transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(200)) },
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                verticalArrangement = Arrangement.SpaceEvenly
-            ) {
-                BehaviorRow("Early Closed / Resisted", closedCount, totalActions, GuardMintAccent)
-                BehaviorRow("Completed Limits", completedCount, totalActions, Color(0xFF81D4FA))
-                BehaviorRow("Bypassed Limits", bypassedCount, totalActions, Color(0xFFEF5350))
+                label = "behaviorDay"
+            ) { offset ->
+                val actionCounts = logsForDay(stats.recentLogs, offset).groupingBy { it.actionTaken }.eachCount()
+                val closedCount = actionCounts["CLOSED"] ?: 0
+                val bypassedCount = actionCounts["BYPASSED"] ?: 0
+                val completedCount = (actionCounts["COMPLETED"] ?: 0) + (actionCounts["EXTENDED"] ?: 0)
+                val totalActions = (closedCount + completedCount + bypassedCount).coerceAtLeast(1)
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    BehaviorRow("Early Closed / Resisted", closedCount, totalActions, GuardMintAccent)
+                    BehaviorRow("Completed Limits", completedCount, totalActions, Color(0xFF81D4FA))
+                    BehaviorRow("Bypassed Limits", bypassedCount, totalActions, Color(0xFFEF5350))
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -3692,6 +3906,108 @@ fun BehaviorRow(label: String, count: Int, total: Int, color: Color) {
         Box(modifier = Modifier.fillMaxWidth().height(6.dp).background(Color.White.copy(alpha=0.05f), CircleShape)) {
             Box(modifier = Modifier.fillMaxWidth(percentage).fillMaxHeight().background(color, CircleShape))
         }
+    }
+}
+
+@Composable
+fun WeeklySummaryCard(stats: DashboardStats, modifier: Modifier = Modifier) {
+    val logs = stats.recentLogs
+    val weekResisted = remember(logs) {
+        (0..6).sumOf { off -> logsForDay(logs, off).count { it.actionTaken == "CLOSED" } }
+    }
+    val weekMinutes = remember(logs) {
+        (0..6).sumOf { off -> dailyUsageMinutes(logs, off) }
+    }
+    val bestDayLabel = remember(logs) {
+        val topResisted = (0..6)
+            .map { off -> off to logsForDay(logs, off).count { it.actionTaken == "CLOSED" } }
+            .filter { it.second > 0 }
+            .maxByOrNull { it.second }
+        if (topResisted != null) {
+            dayLabel(topResisted.first)
+        } else {
+            val leastUsage = (0..6)
+                .filter { logsForDay(logs, it).isNotEmpty() }
+                .map { it to dailyUsageMinutes(logs, it) }
+                .minByOrNull { it.second }
+            if (leastUsage != null) dayLabel(leastUsage.first) else "—"
+        }
+    }
+    val screenTimeLabel = if (weekMinutes >= 60) "${weekMinutes / 60}h ${weekMinutes % 60}m" else "${weekMinutes}m"
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = GuardSurface),
+        shape = RoundedCornerShape(20.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .border(BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.15f)), RoundedCornerShape(20.dp))
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(GuardMintAccent.copy(alpha = 0.08f), CircleShape)
+                        .border(BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.2f)), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DateRange,
+                        contentDescription = "Weekly Summary",
+                        tint = GuardMintAccent,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(14.dp))
+                Column {
+                    Text(
+                        text = "THIS WEEK",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = GuardMintAccent,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 1.sp
+                    )
+                    Text(
+                        text = "Your last 7 days",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = GuardTextSecondary
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                WeeklyStatItem(label = "Best Day", value = bestDayLabel)
+                WeeklyStatItem(label = "Resisted", value = weekResisted.toString())
+                WeeklyStatItem(label = "Screen Time", value = screenTimeLabel)
+            }
+        }
+    }
+}
+
+@Composable
+private fun WeeklyStatItem(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.Start) {
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            fontFamily = FontFamily.Monospace
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = GuardTextSecondary,
+            fontFamily = FontFamily.Monospace,
+            letterSpacing = 0.5.sp
+        )
     }
 }
 val SARCASTIC_DISABLE = listOf(
