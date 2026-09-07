@@ -5,6 +5,10 @@ import kotlinx.coroutines.flow.Flow
 class ScreenGuardRepository(private val dao: ScreenGuardDao) {
     val allMonitoredApps: Flow<List<MonitoredApp>> = dao.getAllMonitoredAppsFlow()
     val allSessions: Flow<List<SessionHistory>> = dao.getAllSessionsFlow()
+    val historyTotals: Flow<HistoryTotals> = dao.getHistoryTotals()
+
+    fun dashboardSessions(recentStart: Long, recentEnd: Long, weekStart: Long, weekEnd: Long) =
+        dao.getDashboardSessions(recentStart, recentEnd, weekStart, weekEnd)
 
     suspend fun getMonitoredApp(packageName: String): MonitoredApp? {
         return dao.getMonitoredApp(packageName)

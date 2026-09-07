@@ -13,8 +13,8 @@ android {
     applicationId = "in.hichauhan.nudge"
     minSdk = 29
     targetSdk = 36
-    versionCode = 6
-    versionName = "5.1.0"
+    versionCode = 7
+    versionName = "6.0.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -49,6 +49,7 @@ android {
     compose = true
     buildConfig = true
   }
+  bundle { language { enableSplit = false } }
   testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 
@@ -84,6 +85,7 @@ dependencies {
   // implementation(libs.firebase.ai)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
+  implementation("org.apache.commons:commons-csv:1.14.1")
   // implementation(libs.logging.interceptor) // removed: unused OkHttp logging interceptor
   // implementation(libs.moshi.kotlin) // removed: unused JSON library
   // implementation(libs.okhttp) // removed: unused network stack

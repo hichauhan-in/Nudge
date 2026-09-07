@@ -3,7 +3,7 @@ package com.example.domain
 import android.content.Context
 
 object AccessibilityConsent {
-    const val VERSION = 1
+    const val VERSION = 2
     const val PREFS_NAME = "focus_time_prefs"
     const val VERSION_KEY = "accessibility_disclosure_version"
     const val ACCEPTED_KEY = "accessibility_disclosure_accepted"

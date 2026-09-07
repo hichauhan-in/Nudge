@@ -27,8 +27,8 @@ class NudgeWidgetProvider : AppWidgetProvider() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val sessions = AppDatabase.getDatabase(context).dao().getAllSessionsFlow().first()
-                val today = com.example.domain.HistoryIndex(sessions).on(java.time.LocalDate.now())
+                val bounds = com.example.domain.HistoryDates.dayBounds(java.time.LocalDate.now())
+                val today = AppDatabase.getDatabase(context).dao().getWidgetTotals(bounds.first, bounds.second)
                 for (appWidgetId in appWidgetIds) {
                     updateWidget(context, appWidgetManager, appWidgetId, today)
                 }
@@ -52,12 +52,13 @@ class NudgeWidgetProvider : AppWidgetProvider() {
 
     companion object {
         const val ACTION_UPDATE_WIDGET = "com.example.action.UPDATE_WIDGET"
+        private val updatePending = java.util.concurrent.atomic.AtomicBoolean(false)
 
         fun updateWidget(
             context: Context,
             appWidgetManager: AppWidgetManager,
             appWidgetId: Int,
-            today: com.example.domain.DayHistory = com.example.domain.DayHistory()
+            today: com.example.data.WidgetTotals = com.example.data.WidgetTotals()
         ) {
             val views = RemoteViews(context.packageName, R.layout.nudge_widget_layout)
 
@@ -73,16 +74,22 @@ class NudgeWidgetProvider : AppWidgetProvider() {
             )
             views.setOnClickPendingIntent(R.id.nudge_widget_root, configPendingIntent)
             views.setImageViewResource(R.id.widget_logo, R.drawable.ic_widget_lock)
-            views.setTextViewText(R.id.widget_pauses_count, "${today.behavior.closed} resisted today")
+            views.setTextViewText(R.id.widget_pauses_count, "${today.resisted} resisted today")
             views.setTextViewText(R.id.widget_savings, "${today.seconds / 60} min recorded today")
             appWidgetManager.updateAppWidget(appWidgetId, views)
         }
 
         fun triggerUpdate(context: Context) {
-            val intent = Intent(context, NudgeWidgetProvider::class.java).apply {
-                action = ACTION_UPDATE_WIDGET
-            }
-            context.sendBroadcast(intent)
+            val appContext = context.applicationContext
+            val manager = AppWidgetManager.getInstance(appContext)
+            if (manager.getAppWidgetIds(ComponentName(appContext, NudgeWidgetProvider::class.java)).isEmpty()) return
+            if (!updatePending.compareAndSet(false, true)) return
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                updatePending.set(false)
+                appContext.sendBroadcast(Intent(appContext, NudgeWidgetProvider::class.java).apply {
+                    action = ACTION_UPDATE_WIDGET
+                })
+            }, 1_000L)
         }
     }
 }

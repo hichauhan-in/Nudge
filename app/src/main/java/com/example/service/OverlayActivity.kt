@@ -54,10 +54,15 @@ import com.example.ui.theme.GuardSurface
 import com.example.ui.theme.GuardSurfaceItem
 import com.example.ui.theme.GuardMintAccent
 import com.example.ui.theme.GuardTextSecondary
+import com.example.ui.theme.GuardTextPrimary
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 class OverlayActivity : ComponentActivity() {
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(com.example.ui.AppLanguage.wrap(newBase))
+    }
     private lateinit var repository: ScreenGuardRepository
+    private var preview = false
 
     private fun safeFinish() {
         if (!isFinishing && !isDestroyed) {
@@ -68,13 +73,14 @@ class OverlayActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (preview) return
         SessionManager.endDonationFlow()
         SessionManager.setOverlayVisible(true)
         if (!com.example.domain.AccessibilityConsent.isAccepted(this) || !SessionManager.isMasterGuardEnabled.value) safeFinish()
     }
 
     override fun onStop() {
-        SessionManager.setOverlayVisible(false)
+        if (!preview) SessionManager.setOverlayVisible(false)
         super.onStop()
         // Do NOT reset the prompt state here, as it allows bypass on lock screen / system minimization.
         // AppAccessibilityService handles resetting the state when the user actually navigates to another app.
@@ -91,11 +97,52 @@ class OverlayActivity : ComponentActivity() {
         val database = AppDatabase.getDatabase(this)
         repository = ScreenGuardRepository(database.dao())
 
+        preview = intent.getBooleanExtra("preview", false)
+        if (preview) {
+            setContent {
+                com.example.ui.theme.MyApplicationTheme {
+                    Surface(color = GuardBlack, modifier = Modifier.fillMaxSize()) {
+                        Column(Modifier.safeDrawingPadding().padding(24.dp)) {
+                            Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_preview_title), color = GuardMintAccent)
+                            Spacer(Modifier.height(16.dp))
+                            DurationSelectionScreen(packageName = "", appName = "Example app",
+                                onSelected = { safeFinish() }, onBypass = { safeFinish() }, onMinimize = { safeFinish() })
+                        }
+                    }
+                }
+            }
+            return
+        }
+
         setContent {
+            com.example.ui.theme.MyApplicationTheme {
             val sessionState by SessionManager.sessionState.collectAsStateWithLifecycle()
             val prefs = LocalContext.current.getSharedPreferences("focus_time_prefs", android.content.Context.MODE_PRIVATE)
             val useBlurredBackground = prefs.getBoolean("use_blurred_background", false)
-            val isSarcasticMode = prefs.getBoolean("sarcastic_mode", false)
+            val configuration by com.example.data.FocusSettings.configuration.collectAsStateWithLifecycle()
+            val activePackage = when (val state = sessionState) {
+                is SessionState.Prompting -> state.packageName
+                is SessionState.Expired -> state.packageName
+                is SessionState.QuotaExhausted -> state.packageName
+                is SessionState.Cooldown -> state.packageName
+                else -> ""
+            }
+            val appRule = configuration.rule(activePackage)
+            LaunchedEffect(sessionState, configuration) {
+                val quotaState = sessionState as? SessionState.QuotaExhausted ?: return@LaunchedEffect
+                if (SessionManager.isDailyQuotaExhausted(quotaState.packageName, SessionManager.getQuotaMinutes(quotaState.packageName))) {
+                    val midnight = java.time.LocalDate.now().plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                    kotlinx.coroutines.delay((midnight - System.currentTimeMillis()).coerceAtLeast(1L))
+                }
+                if (SessionManager.sessionState.value == quotaState && !SessionManager.isDailyQuotaExhausted(quotaState.packageName, SessionManager.getQuotaMinutes(quotaState.packageName))) {
+                    SessionManager.proceedPastQuota(quotaState.packageName, quotaState.appName)
+                }
+            }
+            val isSarcasticMode = when (appRule.tone) {
+                com.example.domain.PromptTone.DEFAULT -> prefs.getBoolean("sarcastic_mode", false)
+                com.example.domain.PromptTone.GENTLE -> false
+                com.example.domain.PromptTone.SARCASTIC -> true
+            }
 
             LaunchedEffect(useBlurredBackground) {
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
@@ -141,9 +188,9 @@ class OverlayActivity : ComponentActivity() {
                     .fillMaxSize()
                     .background(
                         when {
-                            useBlurredBackground && quotaActive -> Color(0xFF2A0000).copy(alpha = 0.5f)
-                            useBlurredBackground -> Color.Black.copy(alpha = 0.35f)
-                            quotaActive -> Color(0xFF160303)
+                            useBlurredBackground && quotaActive -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
+                            useBlurredBackground -> GuardBlack.copy(alpha = 0.35f)
+                            quotaActive -> MaterialTheme.colorScheme.errorContainer
                             else -> GuardBlack
                         }
                     )
@@ -164,6 +211,7 @@ class OverlayActivity : ComponentActivity() {
                         when (val state = sessionState) {
                             is SessionState.Prompting -> {
                                 MindfulPromptFlow(
+                                    preferredMinutes = appRule.preferredMinutes,
                                     isSarcasticMode = isSarcasticMode,
                                     packageName = state.packageName,
                                     appName = state.appName,
@@ -183,6 +231,8 @@ class OverlayActivity : ComponentActivity() {
                             }
                             is SessionState.Expired -> {
                                 ExpirySheet(
+                                    preferredMinutes = appRule.preferredMinutes,
+                                    extensionsAllowed = SessionManager.canExtend(state.packageName),
                                     isSarcasticMode = isSarcasticMode,
                                     extensionCount = SessionManager.extensionCountFor(state.packageName),
                                     appName = state.appName,
@@ -214,6 +264,9 @@ class OverlayActivity : ComponentActivity() {
                                     }
                                 )
                             }
+                            is SessionState.Cooldown -> {
+                                com.example.ui.CooldownScreen(state, onClose = { triggerHomeMinimize() })
+                            }
                             else -> {
                                 // For Active / Idle status, finish layout
                                 Box(modifier = Modifier.size(1.dp)) {
@@ -229,7 +282,7 @@ class OverlayActivity : ComponentActivity() {
                         Card(
                             colors = CardDefaults.cardColors(containerColor = GuardSurface.copy(alpha = 0.95f)),
                             shape = RoundedCornerShape(28.dp),
-                            border = BorderStroke(1.dp, if (quotaActive) Color.Red.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.1f)),
+                            border = BorderStroke(1.dp, if (quotaActive) Color.Red.copy(alpha = 0.5f) else GuardTextPrimary.copy(alpha = 0.1f)),
                             modifier = Modifier.fillMaxWidth(),
                             elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
                         ) {
@@ -298,76 +351,19 @@ class OverlayActivity : ComponentActivity() {
                             .align(Alignment.BottomEnd)
                             .padding(16.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            // Third (furthest left): Playto — coming soon
-                            DonateOptionChip(
-                                visible = donateExpanded,
-                                delayMillis = 140,
-                                iconRes = com.example.R.drawable.ic_pay_playto,
-                                label = "Playto",
-                                enabled = false,
-                                onClick = {}
-                            )
-                            // Second: Ko-fi
-                            DonateOptionChip(
-                                visible = donateExpanded,
-                                delayMillis = 70,
-                                iconRes = com.example.R.drawable.ic_pay_kofi,
-                                label = "Ko-fi",
-                                enabled = true,
-                                onClick = { launchKofi() }
-                            )
-                            // First (nearest the button): UPI
-                            DonateOptionChip(
-                                visible = donateExpanded,
-                                delayMillis = 0,
-                                iconRes = com.example.R.drawable.ic_pay_upi,
-                                label = "UPI",
-                                enabled = true,
-                                onClick = { launchUpi() }
-                            )
-                            // Anchor: Donate toggle (rightmost, same size/style as the chips)
-                            Row(
-                                modifier = Modifier
-                                    .height(40.dp)
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(GuardMintAccent.copy(alpha = 0.15f))
-                                    .border(
-                                        BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.4f)),
-                                        RoundedCornerShape(14.dp)
-                                    )
-                                    .clickable { donateExpanded = !donateExpanded }
-                                    .padding(horizontal = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(24.dp)
-                                        .clip(RoundedCornerShape(7.dp))
-                                        .background(Color.White),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Coffee,
-                                        contentDescription = "Coffee",
-                                        tint = Color(0xFF6F4E37),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    "Coffee?",
-                                    color = GuardMintAccent,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-                        }
+                        SupportMenu(
+                            expanded = donateExpanded,
+                            onToggle = { donateExpanded = !donateExpanded },
+                            onDismiss = { donateExpanded = false },
+                            onUpi = { launchUpi() },
+                            onKofi = { launchKofi() }
+                        )
                     }
                 }
             }
         }
+    }
+
     }
 
     private fun triggerHomeMinimize() {
@@ -375,6 +371,7 @@ class OverlayActivity : ComponentActivity() {
             is SessionState.Prompting -> SessionManager.logPromptResisted(state.packageName, state.appName, repository)
             is SessionState.Expired -> SessionManager.logPromptResisted(state.packageName, state.appName, repository)
             is SessionState.QuotaExhausted -> SessionManager.logPromptResisted(state.packageName, state.appName, repository)
+            is SessionState.Cooldown -> SessionManager.logPromptResisted(state.packageName, state.appName, repository)
             else -> SessionManager.resetState()
         }
         SessionManager.flushForegroundUsage()
@@ -385,6 +382,20 @@ class OverlayActivity : ComponentActivity() {
         }
         startActivity(homeIntent)
         safeFinish()
+    }
+}
+
+@Composable
+internal fun SupportMenu(expanded: Boolean, onToggle: () -> Unit, onDismiss: () -> Unit, onUpi: () -> Unit, onKofi: () -> Unit) {
+    Box {
+        FilledTonalIconButton(onClick = onToggle, modifier = Modifier.size(48.dp)) {
+            Icon(Icons.Default.Coffee, "Optional support")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, modifier = Modifier.widthIn(max = 240.dp)) {
+            DropdownMenuItem(text = { Text("UPI") }, onClick = onUpi)
+            DropdownMenuItem(text = { Text("Ko-fi") }, onClick = onKofi)
+            DropdownMenuItem(text = { Text("Playto unavailable") }, onClick = {}, enabled = false)
+        }
     }
 }
 
@@ -414,9 +425,9 @@ private fun DonateOptionChip(
                 .padding(end = 8.dp)
                 .height(40.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(if (enabled) GuardMintAccent.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f))
+                .background(if (enabled) GuardMintAccent.copy(alpha = 0.15f) else GuardTextPrimary.copy(alpha = 0.05f))
                 .border(
-                    BorderStroke(1.dp, if (enabled) GuardMintAccent.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.08f)),
+                    BorderStroke(1.dp, if (enabled) GuardMintAccent.copy(alpha = 0.4f) else GuardTextPrimary.copy(alpha = 0.08f)),
                     RoundedCornerShape(14.dp)
                 )
                 .clickable(enabled = enabled) { onClick() }
@@ -427,7 +438,7 @@ private fun DonateOptionChip(
                 modifier = Modifier
                     .size(24.dp)
                     .clip(RoundedCornerShape(7.dp))
-                    .background(Color.White),
+                    .background(GuardTextPrimary),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -453,8 +464,8 @@ private fun DonateOptionChip(
 
 @Composable
 private fun QuotaRemainingSection(packageName: String) {
-    val quota = remember(packageName) { SessionManager.getQuotaMinutes(packageName) }
-    if (quota <= 0) return
+    val budget = SessionManager.budgetProgress(packageName) ?: return
+    val quota = budget.limitSeconds / 60
     val remaining = remember(packageName) { SessionManager.getQuotaRemainingMinutes(packageName) }
     val exceeded = remaining <= 0
     val accent = if (exceeded) Color(0xFFEF5350) else GuardMintAccent
@@ -487,7 +498,7 @@ private fun QuotaRemainingSection(packageName: String) {
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = if (exceeded) "Daily quota spent" else "$remaining min left in daily quota",
+                    text = if (exceeded) "${budget.label} spent" else "$remaining min left: ${budget.label}",
                     color = accent,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
@@ -508,13 +519,14 @@ private fun QuotaRing(
     stroke: Dp = 4.dp,
     label: String? = null
 ) {
+    val trackColor = GuardTextPrimary.copy(alpha = 0.08f)
     Box(modifier = modifier.size(diameter), contentAlignment = Alignment.Center) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val strokePx = stroke.toPx()
             val inset = strokePx / 2f
             val arcSize = Size(size.width - strokePx, size.height - strokePx)
             drawArc(
-                color = Color.White.copy(alpha = 0.08f),
+                color = trackColor,
                 startAngle = -90f,
                 sweepAngle = 360f,
                 useCenter = false,
@@ -546,6 +558,7 @@ private fun QuotaRing(
 
 @Composable
 fun MindfulPromptFlow(
+    preferredMinutes: Int = 5,
     isSarcasticMode: Boolean = false,
     packageName: String,
     appName: String,
@@ -554,6 +567,7 @@ fun MindfulPromptFlow(
     onBypass: () -> Unit
 ) {
     DurationSelectionScreen(
+        preferredMinutes = preferredMinutes,
         isSarcasticMode = isSarcasticMode,
         packageName = packageName,
         appName = appName,
@@ -567,6 +581,7 @@ fun MindfulPromptFlow(
 
 @Composable
 fun DurationSelectionScreen(
+    preferredMinutes: Int = 5,
     isSarcasticMode: Boolean = false,
     packageName: String,
     appName: String,
@@ -574,7 +589,7 @@ fun DurationSelectionScreen(
     onBypass: () -> Unit,
     onMinimize: () -> Unit
 ) {
-    var customMinutes by remember { mutableStateOf(5f) }
+    var customMinutes by remember(packageName) { mutableStateOf(preferredMinutes.toFloat()) }
     var showBypassAlert by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
 
@@ -582,7 +597,7 @@ fun DurationSelectionScreen(
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showBypassAlert = false },
             containerColor = com.example.ui.theme.GuardSurface,
-            titleContentColor = androidx.compose.ui.graphics.Color.White,
+            titleContentColor = GuardTextPrimary,
             textContentColor = com.example.ui.theme.GuardTextSecondary,
             title = { androidx.compose.material3.Text("Are you sure?") },
             text = {
@@ -613,9 +628,9 @@ fun DurationSelectionScreen(
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            text = "Usage Threshold",
+            text = androidx.compose.ui.res.stringResource(com.example.R.string.ui_choose_time),
             style = MaterialTheme.typography.titleLarge,
-            color = Color.White,
+            color = GuardTextPrimary,
             fontWeight = FontWeight.Bold,
             fontFamily = FontFamily.Monospace,
             textAlign = TextAlign.Center
@@ -658,11 +673,11 @@ fun DurationSelectionScreen(
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = GuardSurfaceItem,
-                        contentColor = Color.White
+                        contentColor = GuardTextPrimary
                     ),
                     modifier = Modifier
                         .weight(1f)
-                        .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp)),
+                        .border(1.dp, GuardTextPrimary.copy(alpha = 0.05f), RoundedCornerShape(12.dp)),
                     shape = RoundedCornerShape(12.dp),
                     contentPadding = PaddingValues(vertical = 12.dp)
                 ) {
@@ -681,7 +696,7 @@ fun DurationSelectionScreen(
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
+                .border(1.dp, GuardTextPrimary.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
         ) {
             Column(
                 modifier = Modifier.padding(20.dp),
@@ -690,7 +705,7 @@ fun DurationSelectionScreen(
                 Text(
                     text = "Custom: ${customMinutes.toInt()} minutes",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = Color.White,
+                    color = GuardTextPrimary,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace
                 )
@@ -705,7 +720,7 @@ fun DurationSelectionScreen(
                     colors = SliderDefaults.colors(
                         thumbColor = GuardMintAccent,
                         activeTrackColor = GuardMintAccent,
-                        inactiveTrackColor = Color.White.copy(alpha = 0.1f)
+                        inactiveTrackColor = GuardTextPrimary.copy(alpha = 0.1f)
                     )
                 )
             }
@@ -722,10 +737,10 @@ fun DurationSelectionScreen(
             shape = RoundedCornerShape(24.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .heightIn(min = 48.dp)
         ) {
             val sarcasticStartText = remember { com.example.domain.SARCASTIC_START_BUTTONS.random() }
-            val startText = if (isSarcasticMode && customMinutes > 10) sarcasticStartText else "Start Conscious Period"
+            val startText = if (isSarcasticMode && customMinutes > 10) sarcasticStartText else androidx.compose.ui.res.stringResource(com.example.R.string.ui_start_timer)
             Text(startText, fontWeight = FontWeight.Bold)
         }
 
@@ -733,14 +748,14 @@ fun DurationSelectionScreen(
 
         OutlinedButton(
             onClick = onMinimize,
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = GuardTextPrimary),
+            border = BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.15f)),
             shape = RoundedCornerShape(24.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .heightIn(min = 48.dp)
         ) {
-            Text("Minimize $appName", fontWeight = FontWeight.Medium)
+            Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_close_app), fontWeight = FontWeight.Medium)
         }
 
         Spacer(modifier = Modifier.height(20.dp))
@@ -752,13 +767,15 @@ fun DurationSelectionScreen(
                 onBypass()
             }
         }) {
-            Text("Ignore limit for this session", color = GuardTextSecondary, style = MaterialTheme.typography.bodySmall)
+            Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_ignore_session), color = GuardTextSecondary, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
 @Composable
 fun ExpirySheet(
+    preferredMinutes: Int = 5,
+    extensionsAllowed: Boolean = true,
     isSarcasticMode: Boolean = false,
     extensionCount: Int = 0,
     appName: String,
@@ -767,14 +784,14 @@ fun ExpirySheet(
     onExtend: (Int) -> Unit,
     onNoTimer: () -> Unit
 ) {
-    var customMinutes by remember { mutableStateOf(5f) }
+    var customMinutes by remember(packageName) { mutableStateOf(preferredMinutes.toFloat()) }
     var showBypassAlert by remember { mutableStateOf(false) }
     if (showBypassAlert) {
         val remark = remember(packageName) { SARCASTIC_BYPASS.random() }
         AlertDialog(
             onDismissRequest = { showBypassAlert = false },
             containerColor = GuardSurface,
-            titleContentColor = Color.White,
+            titleContentColor = GuardTextPrimary,
             textContentColor = GuardTextSecondary,
             title = { Text("Ignore this limit?") },
             text = { Text(remark) },
@@ -811,11 +828,11 @@ fun ExpirySheet(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        val titleText = if (isSarcasticMode) "Encore ${extensionCount + 1}?" else "Time is Up!"
+        val titleText = if (isSarcasticMode) "Encore ${extensionCount + 1}?" else androidx.compose.ui.res.stringResource(com.example.R.string.ui_time_up)
         Text(
             text = titleText,
             style = MaterialTheme.typography.titleLarge,
-            color = Color.White,
+            color = GuardTextPrimary,
             fontWeight = FontWeight.Bold,
             fontFamily = FontFamily.Monospace,
             textAlign = TextAlign.Center
@@ -839,6 +856,7 @@ fun ExpirySheet(
 
         QuotaRemainingSection(packageName)
 
+        if (extensionsAllowed) {
         // Quick Extend Options
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -849,11 +867,11 @@ fun ExpirySheet(
                     onClick = { onExtend(mins) },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = GuardSurfaceItem,
-                        contentColor = Color.White
+                        contentColor = GuardTextPrimary
                     ),
                     modifier = Modifier
                         .weight(1f)
-                        .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp)),
+                        .border(1.dp, GuardTextPrimary.copy(alpha = 0.05f), RoundedCornerShape(12.dp)),
                     shape = RoundedCornerShape(12.dp),
                     contentPadding = PaddingValues(vertical = 12.dp)
                 ) {
@@ -872,7 +890,7 @@ fun ExpirySheet(
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
+                .border(1.dp, GuardTextPrimary.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
         ) {
             Column(
                 modifier = Modifier.padding(20.dp),
@@ -881,7 +899,7 @@ fun ExpirySheet(
                 Text(
                     text = "Extend: ${customMinutes.toInt()} minutes",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = Color.White,
+                    color = GuardTextPrimary,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace
                 )
@@ -896,7 +914,7 @@ fun ExpirySheet(
                     colors = SliderDefaults.colors(
                         thumbColor = GuardMintAccent,
                         activeTrackColor = GuardMintAccent,
-                        inactiveTrackColor = Color.White.copy(alpha = 0.1f)
+                        inactiveTrackColor = GuardTextPrimary.copy(alpha = 0.1f)
                     )
                 )
             }
@@ -910,39 +928,41 @@ fun ExpirySheet(
             shape = RoundedCornerShape(24.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .heightIn(min = 48.dp)
         ) {
             val sarcasticExtendText = remember(packageName, extensionCount) { SARCASTIC_EXTEND_BUTTONS.random() }
-            val extendText = if (isSarcasticMode) sarcasticExtendText else "Extend Conscious Period"
+            val extendText = if (isSarcasticMode) sarcasticExtendText else androidx.compose.ui.res.stringResource(com.example.R.string.ui_extend_timer)
             Text(extendText, fontWeight = FontWeight.Bold)
         }
-
+        } else {
+            Text("Extension limit reached", color = GuardTextSecondary)
+        }
 
         Spacer(modifier = Modifier.height(12.dp))
 
         Button(
             onClick = onMinimize,
-            colors = ButtonDefaults.buttonColors(containerColor = GuardSurfaceItem, contentColor = Color.White),
+            colors = ButtonDefaults.buttonColors(containerColor = GuardSurfaceItem, contentColor = GuardTextPrimary),
             shape = RoundedCornerShape(24.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .heightIn(min = 48.dp)
         ) {
-            Text(if (isSarcasticMode) "End the sequel" else "Close $appName", fontWeight = FontWeight.Bold)
+            Text(if (isSarcasticMode) "End the sequel" else androidx.compose.ui.res.stringResource(com.example.R.string.ui_close_app), fontWeight = FontWeight.Bold)
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
         OutlinedButton(
             onClick = { if (isSarcasticMode) showBypassAlert = true else onNoTimer() },
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = GuardTextPrimary),
+            border = BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.15f)),
             shape = RoundedCornerShape(24.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .heightIn(min = 48.dp)
         ) {
-            Text("Continue without timer", fontWeight = FontWeight.Medium)
+            Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_without_timer), fontWeight = FontWeight.Medium)
         }
     }
 }
@@ -956,7 +976,8 @@ fun QuotaExhaustedScreen(
     onClose: () -> Unit,
     onContinue: () -> Unit
 ) {
-    val consumedMinutes = remember(packageName) { SessionManager.getQuotaConsumedMinutesTodayLive(packageName) }
+    val budget = SessionManager.budgetProgress(packageName)
+    val consumedMinutes = (budget?.consumedSeconds ?: 0L) / 60
     val sarcasticQuota = remember { SARCASTIC_QUOTA.random() }
     val dangerRed = Color(0xFFEF5350)
 
@@ -987,7 +1008,7 @@ fun QuotaExhaustedScreen(
         Text(
             text = if (strict) "Locked for Today" else "Daily Limit Reached",
             style = MaterialTheme.typography.titleLarge,
-            color = Color.White,
+            color = GuardTextPrimary,
             fontWeight = FontWeight.Bold,
             fontFamily = FontFamily.Monospace,
             textAlign = TextAlign.Center
@@ -997,8 +1018,8 @@ fun QuotaExhaustedScreen(
 
         val body = when {
             isSarcasticMode -> sarcasticQuota
-            strict -> "You've used your full daily quota for $appName. Strict Mode is on, so it's locked until tomorrow."
-            else -> "You've used your full daily quota for $appName today. You can still continue, but be honest with yourself."
+            strict -> "${budget?.label ?: "Daily quota"} is spent. Strict Mode is on for $appName until the daily budget resets."
+            else -> "${budget?.label ?: "Daily quota"} is spent for today. You can choose to continue or close $appName."
         }
         Text(
             text = body,
@@ -1035,9 +1056,9 @@ fun QuotaExhaustedScreen(
                 shape = RoundedCornerShape(24.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .heightIn(min = 48.dp)
             ) {
-                Text("Close $appName", fontWeight = FontWeight.Bold)
+                Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_close_app), fontWeight = FontWeight.Bold)
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -1052,11 +1073,11 @@ fun QuotaExhaustedScreen(
         } else {
             Button(
                 onClick = onContinue,
-                colors = ButtonDefaults.buttonColors(containerColor = dangerRed.copy(alpha = 0.9f), contentColor = Color.White),
+                colors = ButtonDefaults.buttonColors(containerColor = dangerRed.copy(alpha = 0.9f), contentColor = GuardTextPrimary),
                 shape = RoundedCornerShape(24.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .heightIn(min = 48.dp)
             ) {
                 Text("Continue Anyway", fontWeight = FontWeight.Bold)
             }
@@ -1065,14 +1086,14 @@ fun QuotaExhaustedScreen(
 
             OutlinedButton(
                 onClick = onClose,
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = GuardTextPrimary),
+                border = BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.15f)),
                 shape = RoundedCornerShape(24.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .heightIn(min = 48.dp)
             ) {
-                Text("Close $appName", fontWeight = FontWeight.Medium)
+                Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_close_app), fontWeight = FontWeight.Medium)
             }
         }
     }

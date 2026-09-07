@@ -18,6 +18,18 @@ object SessionAction {
     const val LEGACY_COMPLETED = "COMPLETED"
 
     fun isChoice(action: String): Boolean = action in setOf(STARTED, CLOSED, EXTENDED, BYPASSED)
+
+    fun label(action: String): String = when (action) {
+        STARTED -> "Started"
+        CLOSED -> "Resisted"
+        EXTENDED -> "Extended"
+        BYPASSED -> "Bypassed"
+        TIMER_FINISHED -> "Timer ended"
+        TIMER_CANCELLED -> "Timer reset"
+        USAGE -> "Recorded usage"
+        LEGACY_COMPLETED -> "Earlier estimate"
+        else -> "Recorded"
+    }
 }
 
 object HistoryDates {

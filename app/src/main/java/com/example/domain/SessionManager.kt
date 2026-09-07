@@ -31,14 +31,19 @@ import java.util.UUID
  * only one of those is ever on screen at a time.
  */
 object SessionManager {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val supervisor = SupervisorJob()
+    private val scope get() = CoroutineScope(supervisor + Dispatchers.Main.immediate)
     private var appContext: Context? = null
     private var initialized = false
     private val historyJobs = mutableSetOf<Job>()
     private var bootCount = -1
 
-    private val _isMasterGuardEnabled = MutableStateFlow(true)
+    private val _isMasterGuardEnabled = MutableStateFlow(false)
     val isMasterGuardEnabled: StateFlow<Boolean> = _isMasterGuardEnabled
+    private val _pauseUntil = MutableStateFlow<Long?>(null)
+    val pauseUntil: StateFlow<Long?> = _pauseUntil
+    private var pauseJob: Job? = null
+    private var pauseEndElapsed = 0L
 
     // Timer behavior (chosen in the "Timer Behavior" setting).
     const val TIMER_MODE_PERSISTENT = 0     // runs until it expires, no matter what (default)
@@ -77,6 +82,7 @@ object SessionManager {
     private var quotaJob: Job? = null
     private var usageCheckpointJob: Job? = null
     private var usageStartElapsed: Long = 0L
+    val usageRevision = MutableStateFlow(0L)
     private var monitoredNames: Map<String, String> = emptyMap()
     private var donationStartedAt: Long? = null
     var overlayVisible = false
@@ -106,7 +112,12 @@ object SessionManager {
 
     fun init(context: Context) {
         appContext = context.applicationContext
-        if (initialized) return
+        com.example.data.FocusSettings.init(context)
+        if (initialized) {
+            if (!AccessibilityConsent.isAccepted(context)) setMasterGuardEnabled(false)
+            else resumeIfDue()
+            return
+        }
         initialized = true
         bootCount = Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, -1)
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -115,9 +126,21 @@ object SessionManager {
         _strictModeEnabled.value = prefs.getBoolean(KEY_STRICT_MODE, false)
         if (_isMasterGuardEnabled.value) restoreSessions()
         else prefs.edit().remove(KEY_ACTIVE_SESSIONS).apply()
+        if (AccessibilityConsent.isAccepted(context)) {
+            val deadline = prefs.getLong("pause_until", 0L)
+            if (deadline > 0L) {
+                _pauseUntil.value = deadline
+                pauseEndElapsed = if (bootCount >= 0 && prefs.getInt("pause_boot", -2) == bootCount)
+                    prefs.getLong("pause_elapsed", 0L)
+                else SystemClock.elapsedRealtime() + (deadline - System.currentTimeMillis()).coerceAtMost(86_400_000L)
+                scheduleResume()
+                resumeIfDue()
+            }
+        }
     }
 
     fun setMasterGuardEnabled(enabled: Boolean) {
+        cancelScheduledResume()
         val allowed = enabled && appContext?.let(AccessibilityConsent::isAccepted) == true
         if (!allowed) {
             flushForegroundUsage()
@@ -135,6 +158,52 @@ object SessionManager {
         }
     }
 
+    fun pauseFor(minutes: Int) {
+        val context = appContext ?: return
+        if (minutes !in 1..1440 || !AccessibilityConsent.isAccepted(context)) return
+        setMasterGuardEnabled(false)
+        _pauseUntil.value = System.currentTimeMillis() + minutes * 60_000L
+        pauseEndElapsed = SystemClock.elapsedRealtime() + minutes * 60_000L
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putLong("pause_until", _pauseUntil.value!!).putLong("pause_elapsed", pauseEndElapsed)
+            .putInt("pause_boot", bootCount).apply()
+        scheduleResume()
+    }
+
+    fun resumeIfDue() {
+        if (_pauseUntil.value != null && SystemClock.elapsedRealtime() >= pauseEndElapsed) {
+            setMasterGuardEnabled(true)
+        }
+    }
+
+    private fun resumeIntent(): android.app.PendingIntent? = appContext?.let { context ->
+        android.app.PendingIntent.getBroadcast(context, 1801,
+            Intent(context, com.example.service.PauseResumeReceiver::class.java),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
+    }
+
+    private fun scheduleResume() {
+        pauseJob?.cancel()
+        pauseJob = scope.launch {
+            delay((pauseEndElapsed - SystemClock.elapsedRealtime()).coerceAtLeast(1L))
+            resumeIfDue()
+        }
+        resumeIntent()?.let { pending ->
+            appContext?.getSystemService(android.app.AlarmManager::class.java)?.setAndAllowWhileIdle(
+                android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, pauseEndElapsed, pending)
+        }
+    }
+
+    private fun cancelScheduledResume() {
+        pauseJob?.cancel()
+        pauseJob = null
+        _pauseUntil.value = null
+        pauseEndElapsed = 0L
+        appContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)?.edit()
+            ?.remove("pause_until")?.remove("pause_elapsed")?.remove("pause_boot")?.apply()
+        resumeIntent()?.let { appContext?.getSystemService(android.app.AlarmManager::class.java)?.cancel(it) }
+    }
+
     fun withdrawConsent() {
         setMasterGuardEnabled(false)
         appContext?.let(AccessibilityConsent::decline)
@@ -145,6 +214,12 @@ object SessionManager {
         historyJobs.toList().joinAll()
         repository.clearHistory()
         appContext?.let { com.example.service.NudgeWidgetProvider.triggerUpdate(it) }
+    }
+
+    suspend fun prepareForRestore() {
+        setMasterGuardEnabled(false)
+        historyJobs.toList().joinAll()
+        appContext?.let(AccessibilityConsent::decline)
     }
 
     fun setTimerMode(mode: Int) {
@@ -175,9 +250,11 @@ object SessionManager {
 
     /** True if [packageName] has a daily quota and today's actual usage meets/exceeds it. */
     fun isDailyQuotaExhausted(packageName: String, quotaMinutes: Int): Boolean {
-        if (quotaMinutes <= 0) return false
-        return liveConsumedSeconds(packageName) >= quotaMinutes * 60
+        return (budgetProgress(packageName, quotaMinutes)?.remainingSeconds ?: Long.MAX_VALUE) <= 0
     }
+
+    fun budgetProgress(packageName: String, personalMinutes: Int = getQuotaMinutes(packageName)): BudgetProgress? =
+        com.example.data.FocusSettings.configuration.value.budgetProgress(packageName, personalMinutes, ::liveConsumedSeconds)
 
     private fun consumeQuota(packageName: String, seconds: Int, day: Long = todayKey()) {
         if (seconds <= 0) return
@@ -190,6 +267,7 @@ object SessionManager {
             .putLong(KEY_QUOTA_DAY_PREFIX + packageName, today)
             .putInt(KEY_QUOTA_USED_PREFIX + packageName, (current.toLong() + seconds).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
             .apply()
+        usageRevision.value++
     }
 
     // --- Actual foreground-usage accounting for daily quotas ------------------------------
@@ -222,7 +300,7 @@ object SessionManager {
     /** [packageName] is now the foreground app; bank the previous app's elapsed dwell first. */
     fun noteForegroundUsage(packageName: String) {
         if (!_isMasterGuardEnabled.value || appContext?.let(AccessibilityConsent::isAccepted) != true) return
-        if (packageName !in monitoredNames) {
+        if (packageName !in monitoredNames || !isScheduledNow(packageName)) {
             flushForegroundUsage()
             return
         }
@@ -282,9 +360,8 @@ object SessionManager {
         quotaJob?.cancel()
         quotaJob = null
         val pkg = usageTrackedPkg ?: return
-        val quota = getQuotaMinutes(pkg)
-        if (quota <= 0 || !_isMasterGuardEnabled.value) return
-        val remaining = quota * 60L - liveConsumedSeconds(pkg)
+        if (!_isMasterGuardEnabled.value) return
+        val remaining = budgetProgress(pkg)?.remainingSeconds ?: return
         if (remaining <= 0 && !_strictModeEnabled.value) return
         quotaJob = scope.launch {
             delay(maxOf(remaining * 1_000L, 1L))
@@ -304,13 +381,38 @@ object SessionManager {
 
     /** Minutes of daily quota still available for [packageName] (rounded up), 0 if none/spent. */
     fun getQuotaRemainingMinutes(packageName: String): Int {
-        val quota = getQuotaMinutes(packageName)
-        if (quota <= 0) return 0
-        val remainingSeconds = quota * 60 - liveConsumedSeconds(packageName)
-        return if (remainingSeconds <= 0) 0 else (remainingSeconds + 59) / 60
+        val remainingSeconds = budgetProgress(packageName)?.remainingSeconds ?: return 0
+        return if (remainingSeconds <= 0) 0 else ((remainingSeconds + 59) / 60).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     }
 
     fun extensionCountFor(packageName: String): Int = extensionCounts[packageName] ?: 0
+
+    fun isScheduledNow(packageName: String): Boolean =
+        com.example.data.FocusSettings.configuration.value.isActive(packageName, java.time.ZonedDateTime.now())
+
+    fun canExtend(packageName: String): Boolean {
+        val limit = com.example.data.FocusSettings.configuration.value.rule(packageName).maxExtensions
+        return limit == 0 || extensionCountFor(packageName) < limit
+    }
+
+    fun cooldownRemainingMillis(packageName: String): Long {
+        val rule = com.example.data.FocusSettings.configuration.value.rule(packageName)
+        if (rule.maxExtensions == 0 || rule.cooldownMinutes == 0) return 0L
+        val prefs = appContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) ?: return 0L
+        val remaining = if (bootCount >= 0 && prefs.getInt("cooldown_boot_$packageName", -2) == bootCount)
+            prefs.getLong("cooldown_elapsed_$packageName", 0L) - SystemClock.elapsedRealtime()
+        else prefs.getLong("cooldown_until_$packageName", 0L) - System.currentTimeMillis()
+        return remaining.coerceIn(0L, 3_600_000L)
+    }
+
+    fun showCooldown(packageName: String, appName: String): Boolean {
+        if (!_isMasterGuardEnabled.value || appContext?.let(AccessibilityConsent::isAccepted) != true) return false
+        val remaining = cooldownRemainingMillis(packageName)
+        if (remaining <= 0L) return false
+        flushForegroundUsage()
+        _sessionState.value = SessionState.Cooldown(packageName, appName, System.currentTimeMillis() + remaining)
+        return true
+    }
 
     /** True if [packageName] currently has a running, unexpired timer. */
     fun hasValidActiveTimer(packageName: String): Boolean {
@@ -374,23 +476,25 @@ object SessionManager {
     }
 
     fun startSession(packageName: String, appName: String, durationMinutes: Int, repository: ScreenGuardRepository) {
-        if (!_isMasterGuardEnabled.value || durationMinutes !in 1..180) return
+        if (!_isMasterGuardEnabled.value || durationMinutes !in 1..180 || cooldownRemainingMillis(packageName) > 0L) return
         isPromptInFlight.set(false)
         promptInFlightPackage = null
         extensionCounts[packageName] = 0
         addOrReplaceTimer(packageName, appName, durationMinutes * 60, SessionAction.STARTED, repository)
         _sessionState.value = SessionState.Idle
         noteForegroundUsage(packageName)
+        com.example.data.FocusSettings.rememberDuration(packageName, durationMinutes)
     }
 
     fun extendSession(packageName: String, appName: String, extraMinutes: Int, repository: ScreenGuardRepository) {
-        if (!_isMasterGuardEnabled.value || extraMinutes !in 1..180) return
+        if (!_isMasterGuardEnabled.value || extraMinutes !in 1..180 || !canExtend(packageName) || cooldownRemainingMillis(packageName) > 0L) return
         isPromptInFlight.set(false)
         promptInFlightPackage = null
         extensionCounts[packageName] = (extensionCounts[packageName] ?: 0) + 1
         addOrReplaceTimer(packageName, appName, extraMinutes * 60, SessionAction.EXTENDED, repository)
         _sessionState.value = SessionState.Idle
         noteForegroundUsage(packageName)
+        com.example.data.FocusSettings.rememberDuration(packageName, extraMinutes)
     }
 
     private fun addOrReplaceTimer(
@@ -426,14 +530,18 @@ object SessionManager {
             persistSessions()
             recordEvent(packageName, appName, SessionAction.TIMER_FINISHED, eventId = timer.eventId + ":end", timestamp = timer.endTimeStamp)
 
+            persistCooldown(timer)
+
             if (lastUserAppPackage == packageName && _isMasterGuardEnabled.value &&
-                appContext?.let(AccessibilityConsent::isAccepted) == true && !overlayVisible && !donationInProgress()) {
+                appContext?.let(AccessibilityConsent::isAccepted) == true && isScheduledNow(packageName) && !overlayVisible && !donationInProgress()) {
                 flushForegroundUsage()
                 // Still in the foreground. If the app's daily quota is now spent, gate with the
                 // red quota screen; otherwise offer to extend as usual.
                 val quota = getQuotaMinutes(packageName)
-                _sessionState.value = if (quota > 0 && isDailyQuotaExhausted(packageName, quota)) {
+                _sessionState.value = if (isDailyQuotaExhausted(packageName, quota)) {
                     SessionState.QuotaExhausted(packageName, appName, _strictModeEnabled.value)
+                } else if (cooldownRemainingMillis(packageName) > 0L) {
+                    SessionState.Cooldown(packageName, appName, System.currentTimeMillis() + cooldownRemainingMillis(packageName))
                 } else {
                     SessionState.Expired(packageName, appName)
                 }
@@ -464,6 +572,16 @@ object SessionManager {
         } catch (exception: SecurityException) {
             resetState()
         }
+    }
+
+    private fun persistCooldown(timer: ActiveTimer) {
+        val rule = com.example.data.FocusSettings.configuration.value.rule(timer.packageName)
+        if (rule.maxExtensions <= 0 || timer.extensionCount < rule.maxExtensions || rule.cooldownMinutes <= 0) return
+        val packageName = timer.packageName
+        appContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)?.edit()
+            ?.putLong("cooldown_until_$packageName", timer.endTimeStamp + rule.cooldownMinutes * 60_000L)
+            ?.putLong("cooldown_elapsed_$packageName", timer.endElapsedRealtime + rule.cooldownMinutes * 60_000L)
+            ?.putInt("cooldown_boot_$packageName", bootCount)?.apply()
     }
 
     fun bypassApp(packageName: String, appName: String, repository: ScreenGuardRepository) {
@@ -503,6 +621,7 @@ object SessionManager {
         val s = _sessionState.value
         if ((s is SessionState.Prompting && s.packageName == packageName) ||
             (s is SessionState.Expired && s.packageName == packageName) ||
+            (s is SessionState.Cooldown && s.packageName == packageName) ||
             (s is SessionState.QuotaExhausted && s.packageName == packageName)
         ) {
             _sessionState.value = SessionState.Idle
@@ -528,8 +647,12 @@ object SessionManager {
     internal fun stopForProcessRecreationTest() {
         timerJobs.values.forEach { it.cancel() }
         timerJobs.clear()
+        historyJobs.toList().forEach { it.cancel() }
+        historyJobs.clear()
         quotaJob?.cancel()
         usageCheckpointJob?.cancel()
+        pauseJob?.cancel()
+        _pauseUntil.value = null
         usageTrackedPkg = null
         _activeTimers.value = emptyMap()
         extensionCounts.clear()
@@ -573,6 +696,8 @@ object SessionManager {
 
     private fun refreshNotification() {
         appContext?.let {
+            android.service.quicksettings.TileService.requestListeningState(it,
+                android.content.ComponentName(it, com.example.service.NudgeTileService::class.java))
             if (_isMasterGuardEnabled.value && AccessibilityConsent.isAccepted(it)) com.example.service.MonitorService.refresh(it)
             else com.example.service.MonitorService.stop(it)
         }
@@ -633,6 +758,7 @@ object SessionManager {
                     extensionCounts[pkg] = timer.extensionCount
                 } else {
                     recordEvent(pkg, timer.appName, SessionAction.TIMER_FINISHED, eventId = timer.eventId + ":end", timestamp = endTs)
+                    persistCooldown(timer)
                 }
             }
         } catch (e: Exception) {
@@ -669,5 +795,6 @@ sealed class SessionState {
     object Idle : SessionState()
     data class Prompting(val packageName: String, val appName: String) : SessionState()
     data class Expired(val packageName: String, val appName: String) : SessionState()
+    data class Cooldown(val packageName: String, val appName: String, val until: Long) : SessionState()
     data class QuotaExhausted(val packageName: String, val appName: String, val strict: Boolean) : SessionState()
 }

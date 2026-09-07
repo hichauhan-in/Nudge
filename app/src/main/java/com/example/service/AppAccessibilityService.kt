@@ -28,6 +28,12 @@ class AppAccessibilityService : AccessibilityService() {
     private var pendingForeground: Pair<String, String>? = null
     private var lastOverlayPackage: String? = null
     private var lastOverlayLaunch = 0L
+    private var foreground: Pair<String, String>? = null
+    private var boundaryJob: kotlinx.coroutines.Job? = null
+    private val inputMethods: Set<String> by lazy {
+        getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+            ?.inputMethodList?.map { it.packageName }?.toSet().orEmpty()
+    }
     private val consentListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == AccessibilityConsent.ACCEPTED_KEY && !AccessibilityConsent.isAccepted(this)) {
             SessionManager.setMasterGuardEnabled(false)
@@ -41,6 +47,8 @@ class AppAccessibilityService : AccessibilityService() {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
                 // Screen off = the user stopped using the app; bank its foreground time.
                 SessionManager.flushForegroundUsage()
+                foreground = null
+                boundaryJob?.cancel()
                 SessionManager.lastUserAppPackage = null
                 if (SessionManager.timerMode.value == SessionManager.TIMER_MODE_CLEAR_ON_LOCK) {
                     SessionManager.resetAll()
@@ -50,35 +58,8 @@ class AppAccessibilityService : AccessibilityService() {
     }
 
     companion object {
-        // Packages that are transient system overlays and should NOT reset a session
-        private val TRANSIENT_OVERLAY_PACKAGES = setOf(
-            "com.android.systemui",
-            "android",
-            // Google Assistant / Search / Circle to Search / Lens
-            "com.google.android.googlequicksearchbox",
-            "com.google.android.search.quicksearchbox",
-            "com.google.android.apps.lens",
-            "com.google.android.as",  // Android System Intelligence (Circle to Search host)
-            "com.google.android.apps.search.omnient",
-            // Google services that may overlay
-            "com.google.android.gms",
-            "com.google.android.permissioncontroller",
-            "com.android.permissioncontroller",
-            // Clipboard / text selection
-            "com.android.clipboardui",
-            "com.samsung.android.clipboarduiservice",
-            // Samsung-specific system overlays
-            "com.samsung.android.app.smartcapture",
-            "com.samsung.android.app.cocktailbarservice",
-            "com.samsung.android.app.edgelighting",
-            // MIUI/Xiaomi overlays
-            "com.miui.securitycenter",
-            "com.miui.notification",
-            // OPPO/ColorOS overlays
-            "com.coloros.notificationmanager",
-            // OnePlus overlays
-            "com.oneplus.systemui.support"
-        )
+        val connected = kotlinx.coroutines.flow.MutableStateFlow(false)
+        val lastEventAt = kotlinx.coroutines.flow.MutableStateFlow<Long?>(null)
     }
 
     override fun onCreate() {
@@ -106,6 +87,14 @@ class AppAccessibilityService : AccessibilityService() {
                 }
             }
         }
+        serviceScope.launch {
+            com.example.data.FocusSettings.configuration.collect {
+                if (monitoredAppsReady) {
+                    SessionManager.setMonitoredApps(monitoredApps.values.toList())
+                    foreground?.let { (pkg, cls) -> handleForeground(pkg, cls) }
+                }
+            }
+        }
     }
 
     override fun onServiceConnected() {
@@ -114,6 +103,7 @@ class AppAccessibilityService : AccessibilityService() {
             disableSelf()
             return
         }
+        connected.value = true
         // Pin the process in memory so the running countdown survives leaving a monitored app.
         if (SessionManager.isMasterGuardEnabled.value) {
             MonitorService.start(this)
@@ -121,6 +111,7 @@ class AppAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        connected.value = false
         serviceScope.cancel()
         SessionManager.flushForegroundUsage()
         SessionManager.lastUserAppPackage = null
@@ -136,10 +127,12 @@ class AppAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (!AccessibilityConsent.isAccepted(this)) return
+        SessionManager.resumeIfDue()
         if (!SessionManager.isMasterGuardEnabled.value) return
 
         // We only care about which app comes to the foreground.
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        lastEventAt.value = System.currentTimeMillis()
 
         val packageName = event.packageName?.toString() ?: return
         val className = event.className?.toString() ?: ""
@@ -156,10 +149,22 @@ class AppAccessibilityService : AccessibilityService() {
             getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked == true) return
         if (SessionManager.donationInProgress()) return
         if (packageName == this.packageName) {
+            foreground = null
+            boundaryJob?.cancel()
             SessionManager.flushForegroundUsage()
             return
         }
-        if (isTransientOverlay(packageName, className)) return
+        when (com.example.domain.ForegroundClassifier.classify(packageName, className, inputMethods)) {
+            com.example.domain.ForegroundKind.INPUT_METHOD -> return
+            com.example.domain.ForegroundKind.SYSTEM_OVERLAY -> {
+                foreground = null
+                boundaryJob?.cancel()
+                SessionManager.flushForegroundUsage()
+                SessionManager.lastUserAppPackage = null
+                return
+            }
+            com.example.domain.ForegroundKind.APP -> Unit
+        }
 
         if (isSystemLauncher(packageName) || AppSafety.isProtected(packageName, this.packageName)) {
             // On the home screen; the monitored app is no longer in front. A still-valid
@@ -169,11 +174,23 @@ class AppAccessibilityService : AccessibilityService() {
             SessionManager.flushForegroundUsage()
             clearBypassExcept(null)
             SessionManager.lastUserAppPackage = null
+            foreground = null
+            boundaryJob?.cancel()
             return
         }
 
         // A real, user-facing app is now in the foreground.
         SessionManager.lastUserAppPackage = packageName
+        foreground = packageName to className
+        boundaryJob?.cancel()
+        val boundary = com.example.data.FocusSettings.configuration.value.schedule(packageName)
+            ?.nextBoundary(java.time.ZonedDateTime.now())
+        if (boundary != null) {
+            boundaryJob = serviceScope.launch {
+                kotlinx.coroutines.delay((boundary.toInstant().toEpochMilli() - System.currentTimeMillis()).coerceAtLeast(1L))
+                if (foreground?.first == packageName) handleForeground(packageName, className)
+            }
+        }
         clearBypassExcept(packageName)
         val monitoredApp = monitoredApps[packageName]
         if (monitoredApp == null) {
@@ -181,10 +198,27 @@ class AppAccessibilityService : AccessibilityService() {
             SessionManager.resetState()
             return
         }
+        if (!SessionManager.isScheduledNow(packageName)) {
+            SessionManager.flushForegroundUsage()
+            SessionManager.resetSessionForPackage(packageName)
+            SessionManager.resetState()
+            return
+        }
+        if (SessionManager.showCooldown(packageName, monitoredApp.appName)) {
+            launchOverlay(packageName)
+            return
+        }
         if (SessionManager.strictModeEnabled.value && SessionManager.isDailyQuotaExhausted(packageName, monitoredApp.dailyQuotaMinutes)) {
             SessionManager.startQuotaBlock(packageName, monitoredApp.appName, true)
             launchOverlay(packageName)
             return
+        }
+        val previousState = SessionManager.sessionState.value
+        if (previousState is SessionState.QuotaExhausted && !SessionManager.isDailyQuotaExhausted(packageName, monitoredApp.dailyQuotaMinutes)) {
+            SessionManager.resetState()
+        }
+        if (previousState is SessionState.Cooldown && SessionManager.cooldownRemainingMillis(packageName) == 0L) {
+            SessionManager.resetState()
         }
         val state = SessionManager.sessionState.value
         val pendingPackage = when (state) {
@@ -228,47 +262,10 @@ class AppAccessibilityService : AccessibilityService() {
         SessionManager.lastUserAppPackage = null
     }
 
-    /**
-     * Determines if a package/class represents a transient system overlay that should
-     * NOT be treated as the user leaving a monitored app.
-     * This includes: notification shade, keyboard, Circle to Search, text selection handles,
-     * permission dialogs, Google Assistant overlays, OEM system overlays, etc.
-     */
-    private fun isTransientOverlay(packageName: String, className: String): Boolean {
-        // Check exact known transient packages
-        if (TRANSIENT_OVERLAY_PACKAGES.contains(packageName)) return true
-
-        // Check partial matches for system UI / input method variants across OEMs
-        val lowerPkg = packageName.lowercase()
-        if (lowerPkg.contains("systemui") ||
-            lowerPkg.contains("inputmethod") ||
-            lowerPkg.contains("keyboard") ||
-            lowerPkg.contains("ime.") ||
-            lowerPkg.contains(".ime") ||
-            lowerPkg.contains("permissioncontroller") ||
-            lowerPkg.contains("permissionmanager") ||
-            lowerPkg.contains("clipboardui") ||
-            lowerPkg.contains("screenshot") ||
-            lowerPkg.contains("smartcapture") ||
-            lowerPkg.contains("accessibility")
-        ) return true
-
-        // Check class names for known transient activities/panels
-        val lowerClass = className.lowercase()
-        if (lowerClass.contains("popup") ||
-            lowerClass.contains("notification") ||
-            lowerClass.contains("toast") ||
-            lowerClass.contains("permission") ||
-            lowerClass.contains("clipboard") ||
-            lowerClass.contains("handleview") ||
-            lowerClass.contains("selectionactionmode") ||
-            lowerClass.contains("floatingtoolbar") ||
-            lowerClass.contains("actionmode") ||
-            lowerClass.contains("insertionhandle") ||
-            lowerClass.contains("cursoranchor")
-        ) return true
-
-        return false
+    override fun onUnbind(intent: Intent?): Boolean {
+        connected.value = false
+        SessionManager.setMasterGuardEnabled(false)
+        return super.onUnbind(intent)
     }
 
     /**

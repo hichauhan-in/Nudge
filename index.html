@@ -170,7 +170,7 @@
     </header>
 
     <div class="tldr">
-      <p style="margin:0"><strong>The short version:</strong> Nudge! records usage and choices for apps you select, locally on your device, after accessibility consent and Android approval. Nudge! does not upload or sell that history. There are no accounts, ads, or third-party analytics. Optional payment, website, and Google Play review flows are handled by other providers.</p>
+      <p style="margin:0"><strong>The short version:</strong> Nudge! records usage and choices for apps you select, locally on your device, after accessibility consent and Android approval. Nudge! has no upload server or telemetry. You may explicitly export history or encrypted backups to a storage provider you select. There are no accounts, ads, or third-party analytics. Optional payment, website, and Google Play review flows are handled by other providers.</p>
     </div>
 
     <p>
@@ -186,7 +186,7 @@
       <span class="pill">No accounts</span>
       <span class="pill">No ads</span>
       <span class="pill">No analytics / trackers</span>
-      <span class="pill">All data stays on your device</span>
+      <span class="pill">You control exports</span>
     </div>
     <p>
       Nudge! helps you use selected apps more intentionally by prompting you to set a mindful time limit when you open them.
@@ -203,7 +203,7 @@
       <li><strong>Your monitored-app selections</strong> — app names and package names (e.g. <code>com.instagram.android</code>) of selected apps. The picker queries launchable apps, and launcher detection queries home-screen apps.</li>
       <li><strong>Session &amp; usage data</strong> — foreground usage intervals, timestamps, daily quota totals, timer deadlines, and choices to start, close, extend, or bypass. These records power local history, stop rates, widgets, and selectable weekly summaries. Older releases recorded timer-duration estimates; existing records are retained unchanged.</li>
       <li><strong>Consent</strong> — the version of the disclosure and whether you agreed, stored locally. An earlier onboarding completion is not treated as consent to a new disclosure.</li>
-      <li><strong>App settings &amp; preferences</strong> — such as your timer‑behavior mode, sarcastic mode, notification and appearance preferences.</li>
+      <li><strong>App settings &amp; preferences</strong> — such as timer behavior, prompt tone, schedules, shared budgets, cooldowns, tracked-time goals, language, and appearance preferences.</li>
     </ul>
     <p class="dim">This information is stored in the App’s private, sandboxed storage (local database and preferences) and is never uploaded anywhere by us.</p>
 
@@ -213,13 +213,13 @@
       completely clear about its scope:
     </p>
     <ul>
-      <li>The service listens only for <strong>window/app‑switch events</strong> to read the <strong>package name</strong> of the app currently in the foreground.</li>
+      <li>The service listens only for <strong>window/app‑switch events</strong> to read the <strong>package name and window identifier</strong> used to distinguish app windows from input methods and system overlays. Window identifiers are not stored in history.</li>
       <li>With consent, it runs while Nudge! is not on screen. For selected apps, package transitions enable reminders, foreground-time accounting, timers, and daily quotas. Strict Mode may block a selected app once its quota is spent.</li>
       <li>Nudge! does <strong>not</strong> read, log, record, or transmit the contents of your screen, your keystrokes, your messages, your passwords, or your browsing/search activity.</li>
       <li>The service requests <strong>no window-content access</strong>, interactive-window retrieval, or gesture capability. It does not click controls or change settings in other apps.</li>
       <li>Derived usage intervals, monitored app identifiers, and your session choices are stored locally, not uploaded or shared by Nudge!. Detection is event-driven, with a 30-second usage checkpoint only while a monitored app is active.</li>
     </ul>
-    <p>A dedicated disclosure appears in the normal setup flow before accessibility access. <strong>Agree and enable</strong> records agreement and opens Android settings; <strong>Not now</strong> continues without automatic monitoring. Back, Home, dismissal, and inactivity do not grant consent. There is no consent countdown or auto-dismissal. You can revisit the disclosure through Configure or the Home accessibility status.</p>
+    <p>A dedicated disclosure appears in the normal setup flow before accessibility access. <strong>Agree and enable</strong> records agreement and opens Android settings; <strong>Decline</strong> continues without automatic monitoring. Back, Home, dismissal, scrolling, and inactivity do not grant consent. There is no consent countdown or auto-dismissal. You can revisit the disclosure through Configure or the Home accessibility status. Disclosure version 2 requires renewed agreement even when an older disclosure was accepted.</p>
     <p>Nudge! is a voluntary self-management app, not a disability-support accessibility tool, parental-control service, or device administrator. It does not prevent uninstall or block Android Settings and package-installation controls.</p>
 
     <h2><span class="num">4</span> Permissions we request and why</h2>
@@ -247,12 +247,15 @@
       <li><strong>Uninstalling</strong> the App permanently deletes all of its locally stored data from your device.</li>
     </ul>
     <p>History is not limited to two days or 100 records. It remains until you delete it, clear app storage, or uninstall. Explicit database migrations preserve older records. App data is excluded from Android cloud backup and device transfer. History cannot be recovered after deletion.</p>
+    <p><strong>Optional manual export and backup:</strong> CSV export contains readable history, including app names, package names, timestamps, recorded seconds, and decisions. Anyone with the CSV can read it. Backups encrypt history, monitored-app selections, rules, selected preferences, and current quota counters using AES-256-GCM with a passphrase-derived PBKDF2-HMAC-SHA256 key (600,000 iterations), a random salt, and a random nonce. The plaintext backup limit is 32 MB. Nudge! does not retain your passphrase and cannot recover it. Consent, active timers, and cooldowns are excluded.</p>
+    <p>Export is initiated only by you through Android's document picker. Your chosen provider may store the file online under its own privacy policy. These files are separate from automatic Android backup. Clearing Nudge! data or uninstalling does not delete exported copies; delete those with the provider. Restoring replaces local history and monitored-app selections, keeps monitoring off, and requires new accessibility consent. Existing quota consumption for today is not reduced.</p>
 
     <h2><span class="num">6</span> Data sharing &amp; selling</h2>
     <p>
       Nudge! does <strong>not</strong> upload, share, rent, or sell your locally recorded usage history or settings.
       There is no advertising SDK, analytics SDK, app-operated upload service, or Internet permission. Optional external-provider interactions are described below.
     </p>
+    <p>The exception to keeping files inside private app storage is an export you explicitly choose. Nudge! writes that export to the destination you select; it does not choose a recipient or operate a backup server. The destination provider can process those files under its policies.</p>
 
     <h2><span class="num">7</span> Third‑party services</h2>
     <p>Nudge! is distributed through Google Play and uses a small piece of Google infrastructure:</p>
@@ -289,6 +292,7 @@
     </p>
     <p>For recovery outside the app: Android Settings → Accessibility → Installed apps → Nudge! → Off. Then Android Settings → Apps → Nudge! → Force stop, Storage → Clear storage, or Uninstall. Names vary by device. No PIN, uninstall protection, administrator removal, or factory reset is required.</p>
     <p>Usage and reminders depend on Android package events and background execution. No data is captured before consent, while monitoring is paused, or after force-stop. A sudden process termination may lose the last unflushed interval. Nudge! does not promise exact system-wide screen-time measurement or medical outcomes.</p>
+    <p>Schedules and shared budgets are deterministic rules you configure, not autonomous AI decisions. Outside a selected app's schedule, its usage is not recorded or charged. Timed pause and the Quick Settings tile do not grant accessibility consent. Resume uses an inexact alarm and foreground-event checks; Android power management can delay it. No storage, exact-alarm, Internet, full-screen-intent, or usage-access permission is added for these features.</p>
 
     <h2><span class="num">11</span> Changes to this policy</h2>
     <p>

@@ -32,8 +32,11 @@ class SessionManagerTest {
     @Before
     fun setup() = runBlocking {
         Dispatchers.setMain(dispatcher)
+        SessionManager.stopForProcessRecreationTest()
         AccessibilityConsent.accept(context)
+        android.provider.Settings.Global.putInt(context.contentResolver, android.provider.Settings.Global.BOOT_COUNT, 1)
         SessionManager.init(context)
+        FocusSettings.update(FocusConfiguration())
         SessionManager.resetAll()
         SessionManager.setMasterGuardEnabled(true)
         SessionManager.setMonitoredApps(listOf(MonitoredApp("test", "Test")))
@@ -45,6 +48,7 @@ class SessionManagerTest {
     fun teardown() {
         SessionManager.setMasterGuardEnabled(false)
         dispatcher.scheduler.runCurrent()
+        SessionManager.stopForProcessRecreationTest()
         Dispatchers.resetMain()
     }
 
@@ -71,10 +75,41 @@ class SessionManagerTest {
     }
 
     @Test
+    fun extensionLimitAndCooldownPersistAcrossRecreation() {
+        FocusSettings.updateRule("test", AppRule(maxExtensions = 1, cooldownMinutes = 5))
+        SessionManager.startSession("test", "Test", 1, repository)
+        SessionManager.extendSession("test", "Test", 1, repository)
+        val timer = SessionManager.activeTimers.value.getValue("test")
+        SessionManager.extendSession("test", "Test", 2, repository)
+        assertEquals(timer.eventId, SessionManager.activeTimers.value.getValue("test").eventId)
+        dispatcher.scheduler.runCurrent()
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(61))
+        dispatcher.scheduler.advanceTimeBy(61_000L)
+        dispatcher.scheduler.runCurrent()
+        assertTrue(SessionManager.cooldownRemainingMillis("test") > 0L)
+        SessionManager.stopForProcessRecreationTest()
+        SessionManager.init(context)
+        assertTrue(SessionManager.cooldownRemainingMillis("test") > 0L)
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMinutes(6))
+        assertEquals(0L, SessionManager.cooldownRemainingMillis("test"))
+    }
+
+    @Test
     fun disablingAnAppCancelsItsActiveTimer() {
         SessionManager.startSession("test", "Test", 5, repository)
         SessionManager.setMonitoredApps(listOf(MonitoredApp("test", "Test", isEnabled = false)))
         assertFalse(SessionManager.hasValidActiveTimer("test"))
+    }
+
+    @Test
+    fun finalExtensionExpiringDuringProcessAbsenceStillStartsCooldown() {
+        FocusSettings.updateRule("test", AppRule(maxExtensions = 1, cooldownMinutes = 5))
+        SessionManager.extendSession("test", "Test", 1, repository)
+        SessionManager.stopForProcessRecreationTest()
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofMinutes(2))
+        SessionManager.init(context)
+        assertTrue(SessionManager.activeTimers.value.isEmpty())
+        assertEquals(4 * 60_000L, SessionManager.cooldownRemainingMillis("test"))
     }
 
     @Test

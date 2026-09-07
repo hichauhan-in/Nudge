@@ -9,7 +9,10 @@ import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.R
@@ -20,7 +23,8 @@ fun AccessibilityDisclosure(onAgree: () -> Unit, onDecline: () -> Unit) {
     BackHandler(onBack = onDecline)
     Scaffold(containerColor = GuardBlack, contentWindowInsets = WindowInsets.safeDrawing) { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 24.dp, vertical = 16.dp)
+            modifier = Modifier.fillMaxSize().testTag("accessibility-disclosure")
+                .padding(padding).padding(horizontal = 24.dp, vertical = 16.dp)
         ) {
             Column(
                 modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
@@ -29,6 +33,7 @@ fun AccessibilityDisclosure(onAgree: () -> Unit, onDecline: () -> Unit) {
                 Icon(Icons.Default.PrivacyTip, null, tint = GuardMintAccent, modifier = Modifier.size(36.dp))
                 Text(
                     stringResource(R.string.accessibility_disclosure_title),
+                    modifier = Modifier.semantics { heading() },
                     style = MaterialTheme.typography.headlineSmall,
                     color = GuardTextPrimary,
                     fontWeight = FontWeight.Bold

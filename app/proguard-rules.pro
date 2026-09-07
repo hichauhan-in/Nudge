@@ -1,4 +1,5 @@
 # Add project specific ProGuard rules here.
+-dontwarn edu.umd.cs.findbugs.annotations.SuppressFBWarnings
 # You can control the set of applied configuration files using the
 # proguardFiles setting in build.gradle.
 #

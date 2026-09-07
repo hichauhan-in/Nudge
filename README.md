@@ -28,6 +28,19 @@ We rarely _decide_ to lose an hour to a feed — we open an app on muscle memory
 
 No accounts. No cloud. No ads. Everything happens on your device.
 
+## Version 6.0.0
+
+- Accessibility disclosure version 2 uses **Agree and enable** and **Decline**. Previous disclosure acceptance is not reused. Back, Home, scrolling, and inactivity never grant consent. The obsolete one-button permission screen has been removed.
+- Monitoring status distinguishes Android permission from the service connection. A prompt preview does not log decisions. Timed pauses (15/30/60 minutes) and an optional Quick Settings tile are available. Android may defer the inexact resume alarm; the next foreground event also checks its deadline. Revoking consent or manually pausing cancels automatic resume.
+- Configure includes reusable Work, Evening, and Bedtime profiles, editable weekdays and time windows, shared app budgets, and a weekly tracked-time goal. Assign a profile per app in Monitor; outside its schedule, that app is not guarded or charged. Overnight windows belong to their starting weekday. Shared budgets add the recorded usage of their members; the tighter individual/shared limit applies.
+- Per-app settings include a preferred/remembered duration, prompt tone, maximum extensions, and optional cooldown after the final extension. These remain voluntary rules: pause, settings, and uninstall remain available.
+- Home includes recent 7/28-day trends and recorded-day counts. Date-window queries load recent history and the selected historical week; older records are not deleted. The widget reads only today's aggregate and refreshes are coalesced.
+- Configure offers the original dark theme, an optional light/system theme, and English/Hindi core controls. Hindi includes the complete accessibility disclosure and key actions; detailed explanations and sarcastic remarks still fall back to English.
+- Privacy & Recovery offers CSV export and authenticated, passphrase-encrypted backup/restore through Android's document picker. CSV is readable plaintext. Backups use AES-256-GCM with PBKDF2-HMAC-SHA256 (600,000 iterations), random salt/nonce, and a 32 MB plaintext limit. Consent, active timers, and cooldowns are never restored. Exports may be uploaded by the storage provider the user chooses; they are not deleted when Nudge is uninstalled.
+- Dashboard rendering and view-model state now live separately from the main navigation screen. New controls, rule logic, and data transfer have their own modules.
+
+See [PLAY_STORE_SUBMISSION.md](PLAY_STORE_SUBMISSION.md) before publishing this release. Automated checks do not substitute for testing the signed Play-delivered build on real devices.
+
 ---
 
 ## 📱 Screenshots
@@ -53,7 +66,7 @@ Open a guarded app  ─►  Mindful Prompt: "Commit to a healthy limit"
   Timer runs quietly  ──►  Time's up  ──►  Extend?  or  Close the app
 ```
 
-1. **Review accessibility access** — read the dedicated in-app disclosure. Choose **Agree and enable** to open Android settings, or **Not now** to continue without automatic monitoring. Android approval is a separate step.
+1. **Review accessibility access** — read the dedicated in-app disclosure. Choose **Agree and enable** to open Android settings, or **Decline** to continue without automatic monitoring. Android approval is a separate step.
 2. **Choose your apps** — add launchable apps to the Monitor Console. Android Settings, package installers, home launchers, and Nudge itself are excluded so device controls remain accessible.
 3. **Get nudged** — opening a guarded app prompts for a timer or a deliberate choice to close or continue without one.
 4. **Stay aware** — independent countdowns continue while you switch apps. Android can show a grouped notification with a reset action for each timer.
@@ -130,7 +143,7 @@ Flip on **Sarcastic Mode** for sharper commentary on long sessions and repeated 
 
 Nudge is built to be trustworthy by design:
 
-- **100% on‑device** — usage data, timers and logs never leave your phone.
+- **On-device by default** — no app-operated upload or telemetry. Only an explicit export writes history or an encrypted backup to a user-selected storage provider.
 - **No servers, no telemetry, no analytics, no ads.**
 - **No Internet permission** and no app-operated upload, analytics, advertising, or networking stack. Optional external links and Google Play reviews use their respective providers.
 - **Monitoring works offline.** UPI, Ko-fi, developer-site links, and Google Play may use a network in their own apps; those providers' privacy policies apply.
@@ -173,14 +186,14 @@ cd nudge
 1. Open the project in **Android Studio** and let it sync Gradle.
 2. No API keys or secrets file are required. Debug builds use Android's standard debug keystore.
 3. Run on an emulator or a physical device.
-4. On first launch, review the dedicated Accessibility disclosure. Test both **Not now** and **Agree and enable** before turning the service on in Android settings.
+4. On first launch, review the dedicated Accessibility disclosure. Test both **Decline** and **Agree and enable** before turning the service on in Android settings.
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 .\gradlew.bat :app:assembleRelease :app:lintRelease
 ```
 
-Release builds enable R8 and resource shrinking. Without an upload keystore, the release APK is unsigned and is only a build-validation artifact. For a Play upload, configure `KEYSTORE_PATH`, `STORE_PASSWORD`, and `KEY_PASSWORD` locally (alias `upload`), then run `:app:bundleRelease`; do not commit or share those secrets. Version code is 6; use a larger unused code if Play Console already has 6 or higher.
+Release builds enable R8 and resource shrinking. Without an upload keystore, the release APK and bundle are unsigned build-validation artifacts. For a Play upload, configure `KEYSTORE_PATH`, `STORE_PASSWORD`, and `KEY_PASSWORD` in your publishing environment (alias `upload`), then run `:app:bundleRelease`; do not commit or share those secrets. Version code is 7 and version name is 6.0.0; use a larger unused code if Play Console already has 7 or higher. Both supported language resources are packaged so manual language switching works offline.
 
 On Windows, Kotlin/KSP can misinterpret `!` in a project path as a JAR separator. Build from a path such as `C:\Projects\nudge` without `!`, or run [scripts/verify.ps1](scripts/verify.ps1). The script accepts `-JavaHome` and `-SdkPath` (or their standard environment variables), runs all tests, debug/release APK and bundle builds, and lint. If the source path contains `!`, it uses a disposable source copy excluding signing material and collects results under `build/verification`. Native UI previews are generated with Roborazzi; standalone test runs can enable them with `-Proborazzi.test.record=true`.
 
@@ -201,7 +214,7 @@ Tests cover history beyond 100 records, non-destructive migrations, duplicate ev
 
 ## Google Play resubmission
 
-The app implements a dedicated disclosure with **Agree and enable** and **Not now**, no automatic dismissal, and no consent from Back/Home/navigation. Refusal leaves automatic monitoring off and allows access to the rest of the app. The disclosure explains background access, local storage, use, and sharing before requesting Android approval.
+The app implements a dedicated disclosure with **Agree and enable** and **Decline**, no automatic dismissal, and no consent from Back/Home/navigation. Refusal leaves automatic monitoring off and allows access to the rest of the app. The disclosure explains background access, local storage, use, and optional user-initiated sharing before requesting Android approval.
 
 App code alone cannot guarantee Play approval. Before resubmitting:
 
@@ -216,9 +229,9 @@ References: [User Data policy](https://support.google.com/googleplay/android-dev
 
 ## 🗺️ Roadmap ideas
 
-- Per‑app schedules (e.g. quotas that apply only on weekdays)
-- Optional user-controlled history export
-- Localization
+- Complete localization of detailed explanations and review translated copy with native speakers.
+- Broaden OEM, multi-window, lock/unlock, process recovery, and 16 KB device testing.
+- Profile battery consumption and very large histories on physical devices before making performance claims.
 
 ---
 

@@ -26,11 +26,11 @@ class AccessibilityDisclosureUiTest {
             MyApplicationTheme { AccessibilityDisclosure(onAgree = { agreed++ }, onDecline = { declined++ }) }
         }
         compose.onNodeWithText("Agree and enable").assertIsDisplayed()
-        compose.onNodeWithText("Not now").assertIsDisplayed()
+        compose.onNodeWithText("Decline").assertIsDisplayed()
         compose.waitForIdle()
         assertEquals(0, agreed)
         compose.onRoot().savePreview("accessibility-disclosure")
-        compose.onNodeWithText("Not now").performClick()
+        compose.onNodeWithText("Decline").performClick()
         assertEquals(1, declined)
         assertEquals(0, agreed)
     }
@@ -70,7 +70,38 @@ class AccessibilityDisclosureUiTest {
             }
         }
         compose.onNodeWithText("Agree and enable").assertIsDisplayed()
-        compose.onNodeWithText("Not now").assertIsDisplayed()
+        compose.onNodeWithText("Decline").assertIsDisplayed()
         compose.onRoot().savePreview("accessibility-disclosure-large-text")
+    }
+
+    @Test
+    fun waitingAndScrollingNeverGrantConsent() {
+        var agreed = 0
+        var declined = 0
+        compose.setContent {
+            MyApplicationTheme { AccessibilityDisclosure(onAgree = { agreed++ }, onDecline = { declined++ }) }
+        }
+        compose.mainClock.advanceTimeBy(60_000L)
+        compose.onAllNodes(hasScrollAction()).onFirst().performTouchInput { swipeUp() }
+        compose.onNodeWithText("Agree and enable").assertIsDisplayed()
+        compose.onNodeWithText("Decline").assertIsDisplayed()
+        assertEquals(0, agreed)
+        assertEquals(0, declined)
+    }
+
+    @Test
+    @Config(qualifiers = "w320dp-h480dp")
+    fun compactScreenKeepsBothConsentActionsVisibleAtDoubleFontSize() {
+        compose.setContent {
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density, 2f)
+            ) {
+                MyApplicationTheme { AccessibilityDisclosure(onAgree = {}, onDecline = {}) }
+            }
+        }
+        compose.onNodeWithText("Agree and enable").assertIsDisplayed()
+        compose.onNodeWithText("Decline").assertIsDisplayed()
+        compose.onRoot().savePreview("accessibility-disclosure-compact-large-text")
     }
 }

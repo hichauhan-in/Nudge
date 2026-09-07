@@ -102,6 +102,9 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 
 class MainActivity : ComponentActivity() {
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(com.example.ui.AppLanguage.wrap(newBase))
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         SessionManager.init(this)
@@ -128,6 +131,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         SessionManager.endDonationFlow()
+        SessionManager.resumeIfDue()
         SessionManager.flushForegroundUsage()
         SessionManager.lastUserAppPackage = null
         // Re-post the monitoring banner so it appears right after the user enables notifications.
@@ -160,167 +164,6 @@ data class AppDisplayItem(
     val dailyQuotaMinutes: Int = 0,
     val icon: Drawable? = null
 )
-
-class MainViewModel(private val repository: ScreenGuardRepository, context: Context) : ViewModel() {
-    private val appContext = context.applicationContext
-    private val _searchQuery = MutableStateFlow("")
-    val searchQuery: StateFlow<String> = _searchQuery
-
-    private val _installedApps = MutableStateFlow<List<AppDisplayItem>>(emptyList())
-    val installedApps: StateFlow<List<AppDisplayItem>> = combine(_installedApps, repository.allMonitoredApps) { installed, monitored ->
-        val saved = monitored.associateBy { it.packageName }
-        installed.map { app ->
-            val config = saved[app.packageName]
-            app.copy(isEnabled = config?.isEnabled == true, isMonitored = config != null, dailyQuotaMinutes = config?.dailyQuotaMinutes ?: 0)
-        }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    private val _isLoadingApps = MutableStateFlow(false)
-    val isLoadingApps: StateFlow<Boolean> = _isLoadingApps
-
-    val monitoredAppsFlow: Flow<List<MonitoredApp>> = repository.allMonitoredApps
-    val sessionHistoryFlow: Flow<List<SessionHistory>> = repository.allSessions
-
-    private val calendarClock = flow {
-        while (true) {
-            val zone = ZoneId.systemDefault()
-            emit(LocalDate.now(zone) to zone)
-            kotlinx.coroutines.delay(60_000L)
-        }
-    }.distinctUntilChanged()
-
-    val statisticsState = combine(sessionHistoryFlow, monitoredAppsFlow, calendarClock) { history, monitored, clock ->
-        val index = HistoryIndex(history, clock.second)
-        val totalPauses = history.count { SessionAction.isChoice(it.actionTaken) }
-        val closed = history.count { it.actionTaken == SessionAction.CLOSED }
-        val extended = history.count { it.actionTaken == SessionAction.EXTENDED }
-        val bypassed = history.count { it.actionTaken == "BYPASSED" }
-        val guardedAppsCount = monitored.count { it.isEnabled }
-        val successRate = com.example.domain.BehaviorCounts(closed, extended, bypassed).stopRate ?: 0
-        val totalTimeSeconds = history.sumOf { it.durationSeconds.coerceAtLeast(0).toLong() }
-        
-        DashboardStats(
-            totalMindfulPauses = totalPauses,
-            totalTimeSpentMinutes = (totalTimeSeconds / 60).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
-            guardedAppsCount = guardedAppsCount,
-            bypassedInterventions = bypassed,
-            successPercentage = successRate,
-            recentLogs = history,
-            historyIndex = index,
-            referenceDate = clock.first
-        )
-    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardStats())
-
-    fun setQuery(query: String) {
-        _searchQuery.value = query
-    }
-
-    fun loadInstalledApps() {
-        if (_isLoadingApps.value) return
-        viewModelScope.launch {
-            _isLoadingApps.value = true
-            val apps = withContext(Dispatchers.IO) {
-                try {
-                    val pm = appContext.packageManager
-                    val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
-                        addCategory(Intent.CATEGORY_LAUNCHER)
-                    }
-                    val resolveInfos = pm.queryIntentActivities(mainIntent, 0) ?: emptyList()
-                    
-                    val homePackages = pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)
-                        .map { it.activityInfo.packageName }.toSet()
-
-                    resolveInfos.mapNotNull { info ->
-                        try {
-                            val packageName = info.activityInfo?.packageName ?: return@mapNotNull null
-                            if (com.example.domain.AppSafety.isProtected(packageName, appContext.packageName)) return@mapNotNull null
-                            if (packageName in homePackages) return@mapNotNull null
-
-                            val rawAppName = try {
-                                info.loadLabel(pm).toString()
-                            } catch (e: Exception) {
-                                packageName.substringAfterLast(".")
-                            }
-
-                            val appName = rawAppName
-                            val icon = try {
-                                info.loadIcon(pm)
-                            } catch (e: Exception) {
-                                null
-                            }
-
-                            AppDisplayItem(
-                                packageName = packageName,
-                                appName = appName,
-                                isEnabled = false,
-                                icon = icon
-                            )
-                        } catch (e: Exception) {
-                            null
-                        }
-                    }.distinctBy { it.packageName }.sortedBy { it.appName.lowercase() }
-                } catch (e: Exception) {
-                    emptyList()
-                }
-            }
-            _installedApps.value = apps
-            _isLoadingApps.value = false
-        }
-    }
-
-    fun toggleAppMonitoring(packageName: String, appName: String, currentlyEnabled: Boolean) {
-        viewModelScope.launch {
-            repository.toggleMonitoring(packageName, appName)
-            if (SessionManager.isMasterGuardEnabled.value) {
-                com.example.service.MonitorService.refresh(appContext)
-            }
-        }
-    }
-
-    fun setAppDailyQuota(packageName: String, appName: String, isEnabled: Boolean, quotaMinutes: Int) {
-        viewModelScope.launch {
-            repository.updateDailyQuota(packageName, appName, isEnabled, quotaMinutes)
-        }
-    }
-
-    fun deleteAppFromMonitoring(packageName: String) {
-        viewModelScope.launch {
-            repository.deleteMonitoredApp(packageName)
-            SessionManager.resetSessionForPackage(packageName)
-            if (SessionManager.isMasterGuardEnabled.value) {
-                com.example.service.MonitorService.refresh(appContext)
-            }
-        }
-    }
-
-    fun clearAllLogs() {
-        viewModelScope.launch {
-            SessionManager.clearHistory(repository)
-        }
-    }
-}
-
-data class DashboardStats(
-    val totalMindfulPauses: Int = 0,
-    val totalTimeSpentMinutes: Int = 0,
-    val guardedAppsCount: Int = 0,
-    val bypassedInterventions: Int = 0,
-    val successPercentage: Int = 100,
-    val recentLogs: List<SessionHistory> = emptyList(),
-    val historyIndex: HistoryIndex = HistoryIndex(recentLogs),
-    val referenceDate: LocalDate = LocalDate.now()
-)
-
-// Simple ViewModel Factory without external framework injection
-class ViewModelFactory(private val repository: ScreenGuardRepository, private val context: Context) : androidx.lifecycle.ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        if (modelClass.isAssignableFrom(MainViewModel::class.java)) {
-            @Suppress("UNCHECKED_CAST")
-            return MainViewModel(repository, context) as T
-        }
-        throw IllegalArgumentException("Unknown ViewModel class")
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -444,7 +287,7 @@ fun MainScreen() {
                                 .fillMaxWidth()
                                 .height(72.dp + bottomInset)
                                 .background(GuardBlack)
-                                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                                .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.05f)), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
                                 .clickable { currentScreen = NavigationScreen.Settings }
                                 .padding(bottom = bottomInset),
                             contentAlignment = Alignment.Center
@@ -471,13 +314,13 @@ fun MainScreen() {
                             tonalElevation = 0.dp,
                             modifier = Modifier
                                 .height(72.dp + bottomInset)
-                                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                                .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.05f)), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
                         ) {
                             NavigationBarItem(
                                 selected = currentScreen == NavigationScreen.Dashboard,
                                 onClick = { currentScreen = NavigationScreen.Dashboard },
                                 icon = { Icon(Icons.Default.Home, contentDescription = "Dashboard") },
-                                label = { Text("Home") },
+                                label = { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_home)) },
                                 colors = NavigationBarItemDefaults.colors(
                                     selectedIconColor = GuardBlack,
                                     selectedTextColor = GuardMintAccent,
@@ -490,7 +333,7 @@ fun MainScreen() {
                                 selected = currentScreen == NavigationScreen.MonitoredApps,
                                 onClick = { currentScreen = NavigationScreen.MonitoredApps },
                                 icon = { Icon(Icons.Default.Lock, contentDescription = "Interceptions") },
-                                label = { Text("Monitor") },
+                                label = { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_monitor)) },
                                 colors = NavigationBarItemDefaults.colors(
                                     selectedIconColor = GuardBlack,
                                     selectedTextColor = GuardMintAccent,
@@ -502,8 +345,8 @@ fun MainScreen() {
                             NavigationBarItem(
                                 selected = currentScreen == NavigationScreen.Settings,
                                 onClick = { currentScreen = NavigationScreen.Settings },
-                                icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
-                                label = { Text("Configure") },
+                                icon = { Icon(Icons.Default.Settings, contentDescription = androidx.compose.ui.res.stringResource(com.example.R.string.ui_settings)) },
+                                label = { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_configure)) },
                                 colors = NavigationBarItemDefaults.colors(
                                     selectedIconColor = GuardBlack,
                                     selectedTextColor = GuardMintAccent,
@@ -544,595 +387,6 @@ fun MainScreen() {
     }
 }
 
-@Composable
-fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: Context, onRequestAccessibility: () -> Unit) {
-    var sarcasticDisableAction by remember { mutableStateOf<(() -> Unit)?>(null) }
-    
-    if (sarcasticDisableAction != null) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { sarcasticDisableAction = null },
-            containerColor = GuardSurface,
-            titleContentColor = Color.White,
-            textContentColor = GuardTextSecondary,
-            title = { Text("Are you sure?") },
-            text = { 
-                val phrase = remember { SARCASTIC_DISABLE.random() }
-                Text(phrase) 
-            },
-            confirmButton = {
-                androidx.compose.material3.TextButton(onClick = { 
-                    sarcasticDisableAction?.invoke() 
-                    sarcasticDisableAction = null
-                }) {
-                    Text("Disable", color = Color(0xFFEF5350))
-                }
-            },
-            dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { sarcasticDisableAction = null }) {
-                    Text("Rethink", color = GuardMintAccent)
-                }
-            }
-        )
-    }
-    val stats by viewModel.statisticsState.collectAsStateWithLifecycle()
-    val isMasterGuardEnabled by SessionManager.isMasterGuardEnabled.collectAsStateWithLifecycle()
-    val prefs = context.getSharedPreferences("focus_time_prefs", Context.MODE_PRIVATE)
-    var isSarcasticMode by remember { mutableStateOf(prefs.getBoolean("sarcastic_mode", false)) }
-    val haptics = LocalHapticFeedback.current
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.Start
-    ) {
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(
-                    text = "Home",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 1.sp
-                )
-                Text(
-                    text = if (isMasterGuardEnabled && isServiceEnabled) "MONITORING ACTIVE" else "MONITORING PAUSED",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = if (isMasterGuardEnabled) GuardMintAccent else GuardTextSecondary,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 2.sp
-                    )
-                )
-            }
-            // Rounded status toggle as represented in HTML spec
-            Box(
-                modifier = Modifier
-                    .width(48.dp)
-                    .height(24.dp)
-                    .background(
-                        color = if (isMasterGuardEnabled) GuardMintAccent else Color.White.copy(alpha = 0.2f),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                    .clickable {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        if (!isMasterGuardEnabled && !isServiceEnabled) {
-                            onRequestAccessibility()
-                        } else if (isMasterGuardEnabled && isSarcasticMode) {
-                            sarcasticDisableAction = {
-                                SessionManager.setMasterGuardEnabled(false)
-                            }
-                        } else {
-                            SessionManager.setMasterGuardEnabled(!isMasterGuardEnabled)
-                        }
-                    }
-                    .padding(2.dp),
-                contentAlignment = if (isMasterGuardEnabled) Alignment.CenterEnd else Alignment.CenterStart
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(20.dp)
-                        .background(GuardBlack, CircleShape)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Onboarding Warning if service is not running
-        if (!isServiceEnabled) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.03f)),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, Color.Red.copy(alpha = 0.3f)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onRequestAccessibility)
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Warning,
-                        contentDescription = "Warning",
-                        tint = Color.Red,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Accessibility Inactive",
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "Tap here to enable System Screen Interceptor Guard.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.LightGray
-                        )
-                    }
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Arrow",
-                        tint = Color.Gray
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(20.dp))
-        }
-
-        // One universal day selector (its graph sits just below the carousel) that drives the
-        // whole dashboard: the carousel cards AND the intercept log further down all read from
-        // this single selected day, so there's only one graph and no per-card duplicates.
-        var selectedDayOffset by remember { mutableStateOf(0) }
-
-        // Insights Carousel (circular: wraps from the last card back to the first; always
-        // starts on the first template each time the dashboard is shown).
-        val templateCount = 3
-        val carouselStartPage = remember { (Int.MAX_VALUE / 2).let { it - it % templateCount } }
-        val pagerState = rememberPagerState(initialPage = carouselStartPage, pageCount = { Int.MAX_VALUE })
-        
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                // Subtle mint radial glow that lifts the active card off the pure-black background
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(230.dp)
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(GuardMintAccent.copy(alpha = 0.07f), Color.Transparent)
-                            )
-                        )
-                )
-                HorizontalPager(
-                    state = pagerState,
-                    modifier = Modifier.fillMaxWidth(),
-                    pageSpacing = 16.dp
-                ) { page ->
-                    Box(
-                        modifier = Modifier.graphicsLayer {
-                            val pageOffset = ((pagerState.currentPage - page) + pagerState.currentPageOffsetFraction)
-                                .absoluteValue.coerceIn(0f, 1f)
-                            val scale = lerp(0.90f, 1f, 1f - pageOffset)
-                            scaleX = scale
-                            scaleY = scale
-                            alpha = lerp(0.4f, 1f, 1f - pageOffset)
-                        }
-                    ) {
-                        when (page % templateCount) {
-                            0 -> MindfulUsageCard(stats, selectedOffset = selectedDayOffset, isSarcasticMode = isSarcasticMode)
-                            1 -> AppUsageInsightCard(stats, selectedOffset = selectedDayOffset, isSarcasticMode = isSarcasticMode)
-                            else -> InterventionBehaviorCard(stats, selectedOffset = selectedDayOffset, isSarcasticMode = isSarcasticMode)
-                        }
-                    }
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(12.dp))
-            
-            // Pager indicator
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center
-            ) {
-                repeat(templateCount) { index ->
-                    val active = pagerState.currentPage % templateCount == index
-                    val color = if (active) GuardMintAccent else Color.White.copy(alpha = 0.2f)
-                    val width = if (active) 16.dp else 6.dp
-                    Box(
-                        modifier = Modifier
-                            .padding(horizontal = 4.dp)
-                            .size(width = width, height = 6.dp)
-                            .background(color, CircleShape)
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Shared 7-day activity graph — universal day selector, placed right below the carousel.
-        DaySelectorBars(stats, selectedDayOffset) { selectedDayOffset = it }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Live stats metrics grid
-        Text(
-            text = "Metrics",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-            color = GuardTextSecondary,
-            fontFamily = FontFamily.Monospace,
-            letterSpacing = 1.sp
-        )
-        
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Metrics — three compact tiles that fit the screen (no horizontal scroll)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            MetricTile(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.TouchApp,
-                value = stats.totalMindfulPauses.toString(),
-                label = if (isSarcasticMode) "Plot Twists" else "Decisions",
-                accent = if (isSarcasticMode) Color(0xFFEF5350) else GuardMintAccent
-            )
-            MetricTile(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.Shield,
-                value = stats.guardedAppsCount.toString(),
-                label = if (isSarcasticMode) "Temptations" else "Guarded Apps",
-                accent = if (isSarcasticMode) Color(0xFFEF5350) else Color(0xFF81D4FA)
-            )
-            MetricTile(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.TimerOff,
-                value = stats.bypassedInterventions.toString(),
-                label = if (isSarcasticMode) "Times Caved" else "Timer Ignored",
-                accent = Color(0xFFEF5350)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Weekly progress summary — best day, resisted count, and screen time over the last 7 days
-        WeeklySummaryCard(stats)
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // On-Device and Offline Guarantee (Cybersecurity Aesthetic)
-        Card(
-            colors = CardDefaults.cardColors(containerColor = GuardSurface),
-            shape = RoundedCornerShape(20.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.15f)), RoundedCornerShape(20.dp))
-        ) {
-            Row(
-                modifier = Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(GuardMintAccent.copy(alpha = 0.08f), CircleShape)
-                        .border(BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.2f)), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CheckCircle,
-                        contentDescription = "On-Device Guarantee",
-                        tint = GuardMintAccent,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(14.dp))
-                Column {
-                    Text(
-                        text = "100% LOCAL & OFFLINE GUARANTEED",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = GuardMintAccent,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 1.sp
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "Your digital footprint never leaves this phone. No telemetry, no external servers.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = GuardTextSecondary,
-                        lineHeight = 16.sp
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        // History Log Title — shares the universal day selector at the top of the dashboard.
-        val dayLogs = remember(stats.historyIndex, stats.referenceDate, selectedDayOffset) {
-            logsForDay(stats, selectedDayOffset).filter { SessionAction.isChoice(it.actionTaken) }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Intercepts",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                color = GuardTextSecondary,
-                fontFamily = FontFamily.Monospace,
-                letterSpacing = 1.sp
-            )
-            Text(
-                text = dayLabel(selectedDayOffset),
-                color = GuardMintAccent,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        if (dayLogs.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.03f)), RoundedCornerShape(16.dp))
-                    .padding(vertical = 32.dp, horizontal = 24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(contentAlignment = Alignment.Center) {
-                        // Soft mint glow halo
-                        Box(
-                            modifier = Modifier
-                                .size(78.dp)
-                                .background(GuardMintAccent.copy(alpha = 0.06f), CircleShape)
-                        )
-                        Box(
-                            modifier = Modifier
-                                .size(54.dp)
-                                .background(GuardMintAccent.copy(alpha = 0.10f), CircleShape)
-                                .border(BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.25f)), CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Shield,
-                                contentDescription = null,
-                                tint = GuardMintAccent,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Text(
-                        text = "No intercepts on this day.",
-                        color = GuardTextSecondary,
-                        fontSize = 13.sp,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "A clean, focused day.",
-                        color = GuardMintAccent.copy(alpha = 0.7f),
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
-        } else {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = GuardSurfaceItem),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.03f)), RoundedCornerShape(16.dp))
-            ) {
-                // Show at most 10 intercept entries at once. Extra entries scroll inside
-                // this section only — the page itself never grows.
-                val maxVisibleLogs = 10
-                val logRowHeight = 56.dp
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = logRowHeight * maxVisibleLogs)
-                        .padding(horizontal = 8.dp)
-                ) {
-                    items(dayLogs, key = { it.id }) { log ->
-                        InterceptLogRow(log = log, rowHeight = logRowHeight)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun InterceptLogRow(log: SessionHistory, rowHeight: androidx.compose.ui.unit.Dp) {
-    Column(modifier = Modifier.height(rowHeight)) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = log.appName,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = log.packageName + " • " + log.actionTaken,
-                    color = GuardTextSecondary,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = if (log.durationSeconds > 0) "${log.durationSeconds / 60}m limit" else "Ignored",
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.Bold,
-                color = if (log.actionTaken == "BYPASSED") Color.Red.copy(alpha = 0.6f) else GuardMintAccent
-            )
-        }
-        HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
-    }
-}
-
-@Composable
-fun AppIconView(
-    icon: Drawable?,
-    appName: String,
-    isSelected: Boolean,
-    modifier: Modifier = Modifier
-) {
-    if (icon != null) {
-        androidx.compose.ui.viewinterop.AndroidView(
-            factory = { context ->
-                android.widget.ImageView(context).apply {
-                    scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-                }
-            },
-            update = { imageView ->
-                imageView.setImageDrawable(icon)
-            },
-            modifier = modifier
-        )
-    } else {
-        Box(
-            modifier = modifier
-                .background(Color.White.copy(alpha = 0.03f), RoundedCornerShape(8.dp))
-                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)), RoundedCornerShape(8.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = appName.firstOrNull()?.uppercase() ?: "",
-                color = if (isSelected) GuardMintAccent else GuardTextSecondary,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 14.sp
-            )
-        }
-    }
-}
-
-@Composable
-private fun MetricTile(icon: ImageVector, value: String, label: String, accent: Color, modifier: Modifier = Modifier) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = GuardSurface),
-        shape = RoundedCornerShape(18.dp),
-        modifier = modifier
-            .border(BorderStroke(1.dp, accent.copy(alpha = 0.18f)), RoundedCornerShape(18.dp))
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp)) {
-            Box(
-                modifier = Modifier
-                    .size(30.dp)
-                    .background(accent.copy(alpha = 0.10f), RoundedCornerShape(9.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = accent,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = value,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                fontFamily = FontFamily.Monospace,
-                maxLines = 1
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = label,
-                color = GuardTextSecondary,
-                fontSize = 10.sp,
-                fontFamily = FontFamily.Monospace,
-                letterSpacing = 0.5.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-@Composable
-private fun QuotaRing(
-    fraction: Float,
-    color: Color,
-    modifier: Modifier = Modifier,
-    diameter: Dp = 44.dp,
-    stroke: Dp = 4.dp,
-    label: String? = null
-) {
-    Box(modifier = modifier.size(diameter), contentAlignment = Alignment.Center) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val strokePx = stroke.toPx()
-            val inset = strokePx / 2f
-            val arcSize = Size(size.width - strokePx, size.height - strokePx)
-            drawArc(
-                color = Color.White.copy(alpha = 0.08f),
-                startAngle = -90f,
-                sweepAngle = 360f,
-                useCenter = false,
-                topLeft = Offset(inset, inset),
-                size = arcSize,
-                style = Stroke(width = strokePx, cap = StrokeCap.Round)
-            )
-            drawArc(
-                color = color,
-                startAngle = -90f,
-                sweepAngle = 360f * fraction.coerceIn(0f, 1f),
-                useCenter = false,
-                topLeft = Offset(inset, inset),
-                size = arcSize,
-                style = Stroke(width = strokePx, cap = StrokeCap.Round)
-            )
-        }
-        if (label != null) {
-            Text(
-                text = label,
-                color = color,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
-        }
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MonitoredAppsView(viewModel: MainViewModel) {
@@ -1140,21 +394,21 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
     val prefs = context.getSharedPreferences("focus_time_prefs", android.content.Context.MODE_PRIVATE)
     val isSarcasticMode = prefs.getBoolean("sarcastic_mode", false)
     var sarcasticDisableAction by remember { mutableStateOf<(() -> Unit)?>(null) }
-    
+
     if (sarcasticDisableAction != null) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { sarcasticDisableAction = null },
             containerColor = GuardSurface,
-            titleContentColor = Color.White,
+            titleContentColor = GuardTextPrimary,
             textContentColor = GuardTextSecondary,
             title = { Text("Are you sure?") },
-            text = { 
+            text = {
                 val phrase = remember { SARCASTIC_DISABLE.random() }
-                Text(phrase) 
+                Text(phrase)
             },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = { 
-                    sarcasticDisableAction?.invoke() 
+                androidx.compose.material3.TextButton(onClick = {
+                    sarcasticDisableAction?.invoke()
                     sarcasticDisableAction = null
                 }) {
                     Text("Disable", color = Color(0xFFEF5350))
@@ -1204,7 +458,7 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
             text = "Monitor Console",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.SemiBold,
-            color = Color.White,
+            color = GuardTextPrimary,
             fontFamily = FontFamily.Monospace
         )
 
@@ -1226,10 +480,10 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                 value = search,
                 onValueChange = { viewModel.setQuery(it) },
                 placeholder = { Text("Track app name...", color = GuardTextSecondary) },
-                textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = GuardTextPrimary),
                 modifier = Modifier
                     .weight(1f)
-                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)), RoundedCornerShape(16.dp))
+                    .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.08f)), RoundedCornerShape(16.dp))
                     .background(GuardSurfaceItem, RoundedCornerShape(16.dp)),
                 shape = RoundedCornerShape(16.dp),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -1240,9 +494,9 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                 ),
                 singleLine = true
             )
-            
+
             Spacer(modifier = Modifier.width(12.dp))
-            
+
             Box(
                 modifier = Modifier
                     .size(48.dp)
@@ -1254,7 +508,7 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                 Icon(
                     imageVector = Icons.Default.Add,
                     contentDescription = "Add Apps",
-                    tint = if (isSarcasticMode) Color.White else GuardBlack
+                    tint = if (isSarcasticMode) GuardTextPrimary else GuardBlack
                 )
             }
         }
@@ -1308,7 +562,7 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                         text = "No Active Guards",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White,
+                        color = GuardTextPrimary,
                         fontFamily = FontFamily.Monospace
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -1338,7 +592,7 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 6.dp)
-                            .border(BorderStroke(1.dp, Color.White.copy(0.03f)), RoundedCornerShape(16.dp))
+                            .border(BorderStroke(1.dp, GuardTextPrimary.copy(0.03f)), RoundedCornerShape(16.dp))
                             .background(GuardSurfaceItem, RoundedCornerShape(16.dp))
                     ) {
                         Row(
@@ -1364,7 +618,7 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                                     Text(
                                         text = item.appName,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color.White,
+                                        color = GuardTextPrimary,
                                         fontSize = 15.sp
                                     )
                                     Text(
@@ -1392,9 +646,9 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                                     colors = SwitchDefaults.colors(
                                         checkedThumbColor = GuardBlack,
                                         checkedTrackColor = GuardMintAccent,
-                                        uncheckedThumbColor = Color.White.copy(alpha = 0.4f),
-                                        uncheckedTrackColor = Color.White.copy(alpha = 0.08f),
-                                        uncheckedBorderColor = Color.White.copy(alpha = 0.15f)
+                                        uncheckedThumbColor = GuardTextPrimary.copy(alpha = 0.4f),
+                                        uncheckedTrackColor = GuardTextPrimary.copy(alpha = 0.08f),
+                                        uncheckedBorderColor = GuardTextPrimary.copy(alpha = 0.15f)
                                     )
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
@@ -1437,7 +691,7 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                     .clickable(enabled = false) {}
             ) {
                 var searchApps by remember { mutableStateOf("") }
-                
+
                 val addAppsFilteredList = remember(installedList, searchApps) {
                     if (searchApps.isEmpty()) {
                         installedList
@@ -1463,19 +717,19 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                             text = "Add Additional Apps",
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White,
+                            color = GuardTextPrimary,
                             fontFamily = FontFamily.Monospace
                         )
                         IconButton(
                             onClick = { showAddAppsDialog = false },
                             modifier = Modifier
-                                .background(Color.White.copy(alpha = 0.05f), CircleShape)
+                                .background(GuardTextPrimary.copy(alpha = 0.05f), CircleShape)
                                 .size(36.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
                                 contentDescription = "Close Dialog",
-                                tint = Color.White
+                                tint = GuardTextPrimary
                             )
                         }
                     }
@@ -1486,10 +740,10 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                         value = searchApps,
                         onValueChange = { searchApps = it },
                         placeholder = { Text("Search installed apps...", color = GuardTextSecondary) },
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = GuardTextPrimary),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)), RoundedCornerShape(16.dp))
+                            .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.08f)), RoundedCornerShape(16.dp))
                             .background(GuardSurfaceItem, RoundedCornerShape(16.dp)),
                         shape = RoundedCornerShape(16.dp),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -1512,7 +766,7 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                             .weight(1f)
                             .clip(RoundedCornerShape(16.dp))
                             .background(GuardSurface)
-                            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.04f)), RoundedCornerShape(16.dp))
+                            .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.04f)), RoundedCornerShape(16.dp))
                     ) {
                         if (isLoading) {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1558,7 +812,7 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
                                                 text = item.appName,
-                                                color = Color.White,
+                                                color = GuardTextPrimary,
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontSize = 14.sp
                                             )
@@ -1572,9 +826,9 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                                             colors = SwitchDefaults.colors(
                                                 checkedThumbColor = GuardBlack,
                                                 checkedTrackColor = GuardMintAccent,
-                                                uncheckedThumbColor = Color.White.copy(alpha = 0.4f),
-                                                uncheckedTrackColor = Color.White.copy(alpha = 0.08f),
-                                                uncheckedBorderColor = Color.White.copy(alpha = 0.15f)
+                                                uncheckedThumbColor = GuardTextPrimary.copy(alpha = 0.4f),
+                                                uncheckedTrackColor = GuardTextPrimary.copy(alpha = 0.08f),
+                                                uncheckedBorderColor = GuardTextPrimary.copy(alpha = 0.15f)
                                             )
                                         )
                                     }
@@ -1593,7 +847,7 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                             .fillMaxWidth()
                             .height(48.dp)
                     ) {
-                        Text("Done", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                        Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_done), fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                     }
                 }
             }
@@ -1618,7 +872,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                     Text("Clear history", color = MaterialTheme.colorScheme.error)
                 }
             },
-            dismissButton = { TextButton(onClick = { showClearHistory = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { showClearHistory = false }) { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_cancel)) } }
         )
     }
 
@@ -1659,10 +913,10 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "Settings",
+                text = androidx.compose.ui.res.stringResource(com.example.R.string.ui_settings),
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = Color.White,
+                color = GuardTextPrimary,
                 fontFamily = FontFamily.Monospace
             )
 
@@ -1692,7 +946,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
+                    .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
             ) {
                 Row(
                     modifier = Modifier
@@ -1704,13 +958,13 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                     Box(
                         modifier = Modifier
                             .size(40.dp)
-                            .background(if (isServiceEnabled) GuardMintAccent.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.12f), CircleShape),
+                            .background(if (isServiceEnabled) GuardMintAccent.copy(alpha = 0.12f) else GuardTextPrimary.copy(alpha = 0.12f), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = if (isServiceEnabled) Icons.Default.Check else Icons.Default.Warning,
                             contentDescription = "Accessibility Status",
-                            tint = if (isServiceEnabled) GuardMintAccent else Color.White,
+                            tint = if (isServiceEnabled) GuardMintAccent else GuardTextPrimary,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -1719,7 +973,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                         Text(
                             text = "Enable Guard System Service",
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = GuardTextPrimary
                         )
                         Text(
                             text = "Android Accessibility Permission Requirement",
@@ -1742,7 +996,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
+                    .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
             ) {
                 Row(
                     modifier = Modifier
@@ -1769,7 +1023,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                         Text(
                             text = "Notification Settings",
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = GuardTextPrimary
                         )
                         Text(
                             text = "Banner for monitored apps (Recommended)",
@@ -1796,7 +1050,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
+                    .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
             ) {
                 Column {
                     Row(
@@ -1824,7 +1078,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                             Text(
                                 text = "Timer Behavior",
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = GuardTextPrimary
                             )
                             Text(
                                 text = currentModeLabel,
@@ -1867,7 +1121,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                 modifier = Modifier
                     .fillMaxWidth()
                     .border(
-                        BorderStroke(1.dp, if (strictMode) Color.Red.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.05f)),
+                        BorderStroke(1.dp, if (strictMode) Color.Red.copy(alpha = 0.4f) else GuardTextPrimary.copy(alpha = 0.05f)),
                         RoundedCornerShape(16.dp)
                     )
             ) {
@@ -1895,7 +1149,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                         Text(
                             text = "Strict Mode",
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = GuardTextPrimary
                         )
                         Text(
                             text = "Block an app once its daily quota is spent",
@@ -1909,13 +1163,19 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = GuardBlack,
                             checkedTrackColor = Color.Red,
-                            uncheckedThumbColor = Color.White.copy(alpha = 0.4f),
-                            uncheckedTrackColor = Color.White.copy(alpha = 0.08f),
-                            uncheckedBorderColor = Color.White.copy(alpha = 0.15f)
+                            uncheckedThumbColor = GuardTextPrimary.copy(alpha = 0.4f),
+                            uncheckedTrackColor = GuardTextPrimary.copy(alpha = 0.08f),
+                            uncheckedBorderColor = GuardTextPrimary.copy(alpha = 0.15f)
                         )
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            com.example.ui.ScheduleProfilesControls()
+            val appsForBudgets by viewModel.installedApps.collectAsStateWithLifecycle()
+            com.example.ui.SharedBudgetControls(appsForBudgets.filter { it.isMonitored })
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -1934,13 +1194,16 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
             var useBlurredBackground by remember { mutableStateOf(prefs.getBoolean("use_blurred_background", false)) }
             var sarcasticMode by remember { mutableStateOf(prefs.getBoolean("sarcastic_mode", false)) }
 
+            com.example.ui.AppearanceControls()
+            Spacer(Modifier.height(12.dp))
+
             // Blurred prompt background — neutral card, independent of sarcastic mode.
             Card(
                 colors = CardDefaults.cardColors(containerColor = GuardSurface),
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
+                    .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
             ) {
                 Row(
                     modifier = Modifier
@@ -1952,7 +1215,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                         Text(
                             text = "Blurred Prompt Background",
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = GuardTextPrimary
                         )
                         Text(
                             text = "Use a blurred background instead of solid black",
@@ -1982,7 +1245,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(BorderStroke(1.dp, if (sarcasticMode) Color.Red.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
+                    .border(BorderStroke(1.dp, if (sarcasticMode) Color.Red.copy(alpha = 0.5f) else GuardTextPrimary.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
             ) {
                 Row(
                     modifier = Modifier
@@ -1994,7 +1257,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                         Text(
                             text = "Sarcastic Mode",
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = GuardTextPrimary
                         )
                         Text(
                             text = if (sarcasticMode) "Your limits now come with commentary." else "Optional, escalating wit about your scrolling choices.",
@@ -2009,7 +1272,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                             prefs.edit().putBoolean("sarcastic_mode", isChecked).apply()
                         },
                         colors = androidx.compose.material3.SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
+                            checkedThumbColor = GuardTextPrimary,
                             checkedTrackColor = Color.Red.copy(alpha = 0.7f)
                         )
                     )
@@ -2046,7 +1309,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                             Text(
                                 "Clear Local History",
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = GuardTextPrimary
                             )
                             Text(
                                 "Delete recorded usage and decisions.",
@@ -2087,7 +1350,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
+                    .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
             ) {
                 Column {
                     Row(
@@ -2117,7 +1380,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                             Text(
                                 text = "Buy Me a Coffee",
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = GuardTextPrimary
                             )
                             Text(
                                 text = "Fuel the development of utilities.",
@@ -2142,7 +1405,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
+                    .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
             ) {
                 Column {
                     Row(
@@ -2177,7 +1440,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                             Text(
                                 text = "About the Developer",
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White,
+                                color = GuardTextPrimary,
                                 fontFamily = FontFamily.Monospace
                             )
                             Text(
@@ -2195,7 +1458,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                         )
                     }
 
-                    androidx.compose.material3.HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+                    androidx.compose.material3.HorizontalDivider(color = GuardTextPrimary.copy(alpha = 0.05f))
 
                     Row(
                         modifier = Modifier
@@ -2222,7 +1485,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                             Text(
                                 text = "App Specific Information",
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White,
+                                color = GuardTextPrimary,
                                 fontFamily = FontFamily.Monospace
                             )
                             Text(
@@ -2267,7 +1530,7 @@ fun HowItWorksScrollView() {
                     text = "Security & Mechanics",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White,
+                    color = GuardTextPrimary,
                     fontFamily = FontFamily.Monospace
                 )
                 Text(
@@ -2295,7 +1558,7 @@ fun HowItWorksScrollView() {
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
+                    .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2309,7 +1572,7 @@ fun HowItWorksScrollView() {
                         Text(
                             text = "Intentional Friction",
                             fontWeight = FontWeight.Bold,
-                            color = Color.White,
+                            color = GuardTextPrimary,
                             fontFamily = FontFamily.Monospace
                         )
                     }
@@ -2318,7 +1581,7 @@ fun HowItWorksScrollView() {
                         text = "Most digital platforms are designed to trigger dopamine loops, keeping you engaged through mindless scrolling. Nudge! introduces conscious pauses back into your routine.\n\n" +
                                 "By introducing an immediate conscious choice with optional timer limits when opening target apps, we break the automatic hand-to-screen muscle memory and shift your mental state from passive consumption to active decision making.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.85f),
+                        color = GuardTextPrimary.copy(alpha = 0.85f),
                         fontFamily = FontFamily.Default,
                         lineHeight = 22.sp
                     )
@@ -2342,7 +1605,7 @@ fun HowItWorksScrollView() {
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
+                    .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2356,7 +1619,7 @@ fun HowItWorksScrollView() {
                         Text(
                             text = "Core Capabilities",
                             fontWeight = FontWeight.Bold,
-                            color = Color.White,
+                            color = GuardTextPrimary,
                             fontFamily = FontFamily.Monospace
                         )
                     }
@@ -2385,13 +1648,13 @@ fun HowItWorksScrollView() {
                                     text = title,
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White,
+                                    color = GuardTextPrimary,
                                     fontFamily = FontFamily.Monospace
                                 )
                                 Text(
                                     text = description,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = Color.White.copy(alpha = 0.7f),
+                                    color = GuardTextPrimary.copy(alpha = 0.7f),
                                     lineHeight = 16.sp
                                 )
                             }
@@ -2420,7 +1683,7 @@ fun HowItWorksScrollView() {
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
+                    .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2434,7 +1697,7 @@ fun HowItWorksScrollView() {
                         Text(
                             text = "Android Accessibility Service",
                             fontWeight = FontWeight.Bold,
-                            color = Color.White,
+                            color = GuardTextPrimary,
                             fontFamily = FontFamily.Monospace
                         )
                     }
@@ -2444,7 +1707,7 @@ fun HowItWorksScrollView() {
                             "Selected apps trigger reminders, session timers, and daily quotas. Foreground usage intervals and your choices stay in local history for the dashboard and weekly summaries.\n\n" +
                             "Nudge! does not request screen-content access, read messages or passwords, or click controls in other apps. Android Settings and uninstall routes stay available. Reminder timing depends on Android and your device.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.85f),
+                        color = GuardTextPrimary.copy(alpha = 0.85f),
                         fontFamily = FontFamily.Default,
                         lineHeight = 22.sp
                     )
@@ -2468,7 +1731,7 @@ fun HowItWorksScrollView() {
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
+                    .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     // Feature list
@@ -2518,7 +1781,7 @@ fun SecurityFactRow(title: String, description: String) {
             Text(
                 text = title,
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
+                color = GuardTextPrimary,
                 style = MaterialTheme.typography.bodyMedium,
                 fontFamily = FontFamily.Monospace
             )
@@ -2551,20 +1814,20 @@ fun SettingsStepRow(
             modifier = Modifier
                 .size(32.dp)
                 .background(if (isCompleted) GuardMintAccent else Color.Transparent, CircleShape)
-                .border(BorderStroke(1.dp, if (isCompleted) GuardMintAccent else Color.White.copy(alpha = 0.3f)), CircleShape),
+                .border(BorderStroke(1.dp, if (isCompleted) GuardMintAccent else GuardTextPrimary.copy(alpha = 0.3f)), CircleShape),
             contentAlignment = Alignment.Center
         ) {
             if (isCompleted) {
-                Icon(Icons.Default.Check, contentDescription = "Done", tint = GuardBlack, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.Check, contentDescription = androidx.compose.ui.res.stringResource(com.example.R.string.ui_done), tint = GuardBlack, modifier = Modifier.size(16.dp))
             } else {
-                Text(stepNumber, color = Color.White, fontWeight = FontWeight.Bold)
+                Text(stepNumber, color = GuardTextPrimary, fontWeight = FontWeight.Bold)
             }
         }
 
         Spacer(modifier = Modifier.width(16.dp))
 
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.Bold, color = Color.White)
+            Text(title, fontWeight = FontWeight.Bold, color = GuardTextPrimary)
             Spacer(modifier = Modifier.height(4.dp))
             Text(description, style = MaterialTheme.typography.bodySmall, color = GuardTextSecondary)
         }
@@ -2625,8 +1888,9 @@ fun areNotificationsEnabled(context: Context): Boolean {
     }
 }
 
+@Composable
 private fun formatQuotaLabel(minutes: Int): String {
-    if (minutes <= 0) return "Off"
+    if (minutes <= 0) return androidx.compose.ui.res.stringResource(com.example.R.string.ui_off)
     val h = minutes / 60
     val m = minutes % 60
     return when {
@@ -2640,12 +1904,13 @@ private fun formatQuotaLabel(minutes: Int): String {
 private fun AppQuotaConfigPanel(item: AppDisplayItem, viewModel: MainViewModel) {
     var sliderVal by remember(item.packageName) { mutableStateOf(item.dailyQuotaMinutes.toFloat()) }
     val quotaMinutes = sliderVal.toInt()
-    val usedMinutes = remember(item.packageName, item.dailyQuotaMinutes) {
+    val usageRevision by SessionManager.usageRevision.collectAsStateWithLifecycle()
+    val usedMinutes = remember(item.packageName, item.dailyQuotaMinutes, usageRevision) {
         SessionManager.getQuotaConsumedMinutesToday(item.packageName)
     }
 
     Column(modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp)) {
-        HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+        HorizontalDivider(color = GuardTextPrimary.copy(alpha = 0.05f))
         Spacer(modifier = Modifier.height(12.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -2655,7 +1920,7 @@ private fun AppQuotaConfigPanel(item: AppDisplayItem, viewModel: MainViewModel) 
             Text(
                 text = "Daily Quota",
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
+                color = GuardTextPrimary,
                 fontSize = 13.sp,
                 fontFamily = FontFamily.Monospace
             )
@@ -2678,7 +1943,7 @@ private fun AppQuotaConfigPanel(item: AppDisplayItem, viewModel: MainViewModel) 
             colors = SliderDefaults.colors(
                 thumbColor = GuardMintAccent,
                 activeTrackColor = GuardMintAccent,
-                inactiveTrackColor = Color.White.copy(alpha = 0.1f)
+                inactiveTrackColor = GuardTextPrimary.copy(alpha = 0.1f)
             )
         )
 
@@ -2694,9 +1959,9 @@ private fun AppQuotaConfigPanel(item: AppDisplayItem, viewModel: MainViewModel) 
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (selected) GuardMintAccent.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.04f))
+                        .background(if (selected) GuardMintAccent.copy(alpha = 0.15f) else GuardTextPrimary.copy(alpha = 0.04f))
                         .border(
-                            BorderStroke(1.dp, if (selected) GuardMintAccent.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.06f)),
+                            BorderStroke(1.dp, if (selected) GuardMintAccent.copy(alpha = 0.4f) else GuardTextPrimary.copy(alpha = 0.06f)),
                             RoundedCornerShape(10.dp)
                         )
                         .clickable {
@@ -2707,7 +1972,7 @@ private fun AppQuotaConfigPanel(item: AppDisplayItem, viewModel: MainViewModel) 
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = if (preset == 0) "Off" else formatQuotaLabel(preset),
+                        text = if (preset == 0) androidx.compose.ui.res.stringResource(com.example.R.string.ui_off) else formatQuotaLabel(preset),
                         color = if (selected) GuardMintAccent else GuardTextSecondary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
@@ -2741,7 +2006,7 @@ private fun AppQuotaConfigPanel(item: AppDisplayItem, viewModel: MainViewModel) 
                         text = "$usedMinutes / $quotaMinutes min",
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
-                        color = if (usedMinutes >= quotaMinutes) Color(0xFFEF5350) else Color.White,
+                        color = if (usedMinutes >= quotaMinutes) Color(0xFFEF5350) else GuardTextPrimary,
                         fontFamily = FontFamily.Monospace
                     )
                 }
@@ -2751,11 +2016,13 @@ private fun AppQuotaConfigPanel(item: AppDisplayItem, viewModel: MainViewModel) 
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Set a daily time quota here - once used, warning is displayed",
+            text = "Foreground time during the selected schedule counts toward this budget.",
             style = MaterialTheme.typography.bodySmall,
             color = GuardTextSecondary,
             fontSize = 10.sp
         )
+        Spacer(Modifier.height(16.dp))
+        com.example.ui.AppRuleControls(item.packageName)
     }
 }
 
@@ -2790,14 +2057,14 @@ private fun SupportOptionsDialog(onDismiss: () -> Unit, onUpi: () -> Unit, onKof
         Card(
             colors = CardDefaults.cardColors(containerColor = GuardSurface),
             shape = RoundedCornerShape(24.dp),
-            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+            border = BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.08f)),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
                     text = "Let's Have a Coffee",
                     fontWeight = FontWeight.Bold,
-                    color = Color.White,
+                    color = GuardTextPrimary,
                     fontSize = 18.sp,
                     fontFamily = FontFamily.Monospace
                 )
@@ -2852,9 +2119,9 @@ private fun PaymentMethodRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .clickable(enabled = enabled) { onClick() }
-            .background(if (enabled) GuardSurfaceItem else Color.White.copy(alpha = 0.02f))
+            .background(if (enabled) GuardSurfaceItem else GuardTextPrimary.copy(alpha = 0.02f))
             .border(
-                BorderStroke(1.dp, if (enabled) GuardMintAccent.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.05f)),
+                BorderStroke(1.dp, if (enabled) GuardMintAccent.copy(alpha = 0.3f) else GuardTextPrimary.copy(alpha = 0.05f)),
                 RoundedCornerShape(14.dp)
             )
             .padding(14.dp),
@@ -2864,7 +2131,7 @@ private fun PaymentMethodRow(
             modifier = Modifier
                 .size(38.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .background(Color.White),
+                .background(GuardTextPrimary),
             contentAlignment = Alignment.Center
         ) {
             Icon(
@@ -2881,7 +2148,7 @@ private fun PaymentMethodRow(
             Text(
                 text = name,
                 fontWeight = FontWeight.Bold,
-                color = if (enabled) Color.White else GuardTextSecondary,
+                color = if (enabled) GuardTextPrimary else GuardTextSecondary,
                 fontSize = 15.sp
             )
             Text(
@@ -2917,7 +2184,7 @@ private fun TimerModeOption(
     description: String,
     onClick: () -> Unit
 ) {
-    HorizontalDivider(color = Color.White.copy(alpha = 0.05f))
+    HorizontalDivider(color = GuardTextPrimary.copy(alpha = 0.05f))
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -2937,7 +2204,7 @@ private fun TimerModeOption(
             Text(
                 text = title,
                 fontWeight = FontWeight.Bold,
-                color = if (selected) GuardMintAccent else Color.White,
+                color = if (selected) GuardMintAccent else GuardTextPrimary,
                 fontSize = 14.sp
             )
             Text(
@@ -2955,11 +2222,11 @@ fun OnboardingScreen(viewModel: MainViewModel, onFinished: () -> Unit) {
     var search by remember { mutableStateOf("") }
     val installedList by viewModel.installedApps.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoadingApps.collectAsStateWithLifecycle()
-    
+
     val activity = androidx.activity.compose.LocalActivity.current
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     var isSearchFocused by remember { mutableStateOf(false) }
-    
+
     androidx.activity.compose.BackHandler(enabled = true) {
         if (isSearchFocused) {
             focusManager.clearFocus()
@@ -2967,7 +2234,7 @@ fun OnboardingScreen(viewModel: MainViewModel, onFinished: () -> Unit) {
             activity?.finish()
         }
     }
-    
+
     val filteredList = remember(installedList, search) {
         if (search.isEmpty()) {
             installedList
@@ -3054,7 +2321,7 @@ fun OnboardingScreen(viewModel: MainViewModel, onFinished: () -> Unit) {
                         style = MaterialTheme.typography.headlineMedium.copy(
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
-                            color = Color.White
+                            color = GuardTextPrimary
                         )
                     )
 
@@ -3091,10 +2358,10 @@ fun OnboardingScreen(viewModel: MainViewModel, onFinished: () -> Unit) {
                 value = search,
                 onValueChange = { search = it },
                 placeholder = { Text("Search installed apps...", color = GuardTextSecondary) },
-                textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = GuardTextPrimary),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)), RoundedCornerShape(16.dp))
+                    .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.08f)), RoundedCornerShape(16.dp))
                     .background(GuardSurfaceItem, RoundedCornerShape(16.dp))
                     .onFocusChanged {
                         isSearchFocused = it.isFocused
@@ -3128,7 +2395,7 @@ fun OnboardingScreen(viewModel: MainViewModel, onFinished: () -> Unit) {
                     .weight(1f)
                     .clip(RoundedCornerShape(16.dp))
                     .background(GuardSurface)
-                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.04f)), RoundedCornerShape(16.dp))
+                    .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.04f)), RoundedCornerShape(16.dp))
                     .padding(8.dp)
             ) {
                 if (isLoading) {
@@ -3168,7 +2435,7 @@ fun OnboardingScreen(viewModel: MainViewModel, onFinished: () -> Unit) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = item.appName,
-                                        color = Color.White,
+                                        color = GuardTextPrimary,
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 14.sp
                                     )
@@ -3181,7 +2448,7 @@ fun OnboardingScreen(viewModel: MainViewModel, onFinished: () -> Unit) {
                                     },
                                     colors = CheckboxDefaults.colors(
                                         checkedColor = GuardMintAccent,
-                                        uncheckedColor = Color.White.copy(alpha = 0.2f),
+                                        uncheckedColor = GuardTextPrimary.copy(alpha = 0.2f),
                                         checkmarkColor = GuardBlack
                                     )
                                 )
@@ -3214,223 +2481,6 @@ fun OnboardingScreen(viewModel: MainViewModel, onFinished: () -> Unit) {
         }
     }
 }
-
-@Composable
-fun IntroPermissionSplashScreen(
-    isPermissionGranted: Boolean,
-    onPermissionGranted: () -> Unit
-) {
-    val context = LocalContext.current
-
-    Scaffold(
-        containerColor = GuardBlack,
-        contentWindowInsets = WindowInsets.safeDrawing
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 24.dp, vertical = 20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            // Main content centered vertically in the available space
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Spacer(modifier = Modifier.height(30.dp))
-
-                // Glowing Shield/Key Lock container
-                Box(
-                    modifier = Modifier
-                        .size(130.dp)
-                        .background(
-                            if (isPermissionGranted) GuardMintAccent.copy(alpha = 0.12f) else Color.Red.copy(alpha = 0.08f),
-                            RoundedCornerShape(32.dp)
-                        )
-                        .border(
-                            BorderStroke(1.5.dp, if (isPermissionGranted) GuardMintAccent else Color.Red.copy(alpha = 0.3f)),
-                            RoundedCornerShape(32.dp)
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = if (isPermissionGranted) Icons.Default.CheckCircle else Icons.Default.Warning,
-                        contentDescription = "Shield Indicator",
-                        tint = if (isPermissionGranted) GuardMintAccent else Color.Red,
-                        modifier = Modifier.size(64.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                    text = "Nudge!",
-                    style = MaterialTheme.typography.headlineMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        color = Color.White
-                    ),
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text(
-                    text = "GRANT PERMISSION REQUEST",
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = GuardMintAccent,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 2.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(35.dp))
-
-                // Detailed explanation of WHY settings are required
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = GuardSurface),
-                    shape = RoundedCornerShape(20.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .border(
-                            BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)),
-                            RoundedCornerShape(20.dp)
-                        )
-                ) {
-                    Column(modifier = Modifier.padding(20.dp)) {
-                        Text(
-                            text = "REQUIRED PERMISSION DETAILED EXPLANATION",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = GuardMintAccent,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            letterSpacing = 1.sp
-                        )
-                        
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Text(
-                            text = "To monitor and help you manage your focus, our app runs a local automated utility that notices when distracting applications are launched.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White,
-                            lineHeight = 20.sp
-                        )
-                        
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Text(
-                            text = "We use Android's Accessibility Service API strictly to retrieve the package name of the active foreground app. This runs 100% offline, on-device, with absolutely NO telemetry or data transmission.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = GuardTextSecondary,
-                            lineHeight = 18.sp
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Dedicated Offline Privacy Guarantee Box
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(GuardSurface)
-                        .border(
-                            BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.15f)),
-                            RoundedCornerShape(16.dp)
-                        )
-                        .padding(horizontal = 20.dp, vertical = 14.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = "Shield Guard",
-                            tint = GuardMintAccent,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = "Zero tracking. Zero external servers. Complete privacy.",
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                color = GuardMintAccent,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold
-                            )
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                // Real-time Status banner
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color.White.copy(alpha = 0.02f))
-                        .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .background(if (isPermissionGranted) GuardMintAccent else Color.Red, CircleShape)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = if (isPermissionGranted) "STATUS: PERMISSION SECURED" else "STATUS: WAITING FOR COMPLIANCE",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (isPermissionGranted) GuardMintAccent else Color.Red,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(30.dp))
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Action Button
-            Button(
-                onClick = {
-                    if (!isPermissionGranted) {
-                        openAccessibilitySettings(context)
-                    } else {
-                        onPermissionGranted()
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isPermissionGranted) GuardMintAccent else Color.White.copy(alpha = 0.9f),
-                    contentColor = GuardBlack
-                ),
-                shape = RoundedCornerShape(24.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
-            ) {
-                Text(
-                    text = if (isPermissionGranted) "CONTINUE TO SETUP" else "ACTIVATE ACCESSIBILITY SERVICE",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(72.dp))
-        }
-        }
-    }
 
 @Composable
 fun WelcomeSplashScreen(onContinue: () -> Unit) {
@@ -3490,7 +2540,7 @@ fun WelcomeSplashScreen(onContinue: () -> Unit) {
                 style = MaterialTheme.typography.headlineLarge.copy(
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
-                    color = Color.White
+                    color = GuardTextPrimary
                 ),
                 textAlign = TextAlign.Center
             )
@@ -3516,7 +2566,7 @@ fun WelcomeSplashScreen(onContinue: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .border(
-                        BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)),
+                        BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.05f)),
                         RoundedCornerShape(20.dp)
                     )
             ) {
@@ -3535,7 +2585,7 @@ fun WelcomeSplashScreen(onContinue: () -> Unit) {
                     Text(
                         text = "Nudge! protects your focus by keeping all choices and data locally on your device. Your attention patterns remain entirely yours, offline and tracking-free.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White,
+                        color = GuardTextPrimary,
                         lineHeight = 20.sp
                     )
 
@@ -3562,708 +2612,14 @@ fun WelcomeSplashScreen(onContinue: () -> Unit) {
                     .height(48.dp)
             ) {
                 Text(
-                    text = "Continue",
+                    text = androidx.compose.ui.res.stringResource(com.example.R.string.ui_continue),
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp,
                     fontFamily = FontFamily.Monospace
                 )
             }
-            
+
             Spacer(modifier = Modifier.height(20.dp))
         }
-    }
-}
-
-// ---- Day-wise usage helpers for the dashboard carousel -------------------------------------
-
-private fun dayBoundsMillis(daysAgo: Int): Pair<Long, Long> {
-    return HistoryDates.dayBounds(LocalDate.now().minusDays(daysAgo.toLong()))
-}
-
-private fun logsForDay(stats: DashboardStats, daysAgo: Int): List<SessionHistory> =
-    stats.historyIndex.on(stats.referenceDate.minusDays(daysAgo.toLong())).records
-
-private fun dailyUsageMinutes(stats: DashboardStats, daysAgo: Int): Int =
-    (stats.historyIndex.on(stats.referenceDate.minusDays(daysAgo.toLong())).seconds / 60)
-        .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-
-private fun dayLabel(daysAgo: Int): String = when (daysAgo) {
-    0 -> "Today"
-    1 -> "Yesterday"
-    else -> "$daysAgo days ago"
-}
-
-/** Days-ago offset for a date picked in the Material date picker (which reports UTC midnight). */
-private fun offsetFromPickedUtcMillis(utcMillis: Long): Int {
-    return HistoryDates.offsetFromPicker(utcMillis)
-}
-
-/** e.g. "1 Jul – 7 Jul" for the 7-day window ending [weekEndOffset] days ago. */
-private fun weekRangeLabel(weekEndOffset: Int): String {
-    val fmt = java.text.SimpleDateFormat("d MMM", java.util.Locale.getDefault())
-    val cal = java.util.Calendar.getInstance()
-    cal.add(java.util.Calendar.DAY_OF_YEAR, -weekEndOffset)
-    val end = fmt.format(cal.time)
-    cal.add(java.util.Calendar.DAY_OF_YEAR, -6)
-    val start = fmt.format(cal.time)
-    return "$start – $end"
-}
-
-/** A tappable 7-day bar strip (oldest → today). Heights scale with each day's usage. */
-@Composable
-internal fun DaySelectorBars(
-    stats: DashboardStats,
-    selectedOffset: Int,
-    onSelect: (Int) -> Unit
-) {
-    val daySeconds = remember(stats.historyIndex, stats.referenceDate) {
-        (6 downTo 0).map { stats.historyIndex.on(stats.referenceDate.minusDays(it.toLong())).seconds }
-    }
-    val maxSeconds = (daySeconds.maxOrNull() ?: 0L).coerceAtLeast(1L)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(48.dp)
-            .selectableGroup(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.Bottom
-    ) {
-        (6 downTo 0).forEachIndexed { index, daysAgo ->
-            val seconds = daySeconds[index]
-            val date = stats.referenceDate.minusDays(daysAgo.toLong())
-            val heightFrac = (seconds.toFloat() / maxSeconds.toFloat()).coerceIn(0.06f, 1f)
-            val isSelected = daysAgo == selectedOffset
-            val animatedHeightFrac by animateFloatAsState(
-                targetValue = heightFrac,
-                animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing),
-                label = "barHeight"
-            )
-            val animatedColor by animateColorAsState(
-                targetValue = if (isSelected) GuardMintAccent else Color.White.copy(alpha = if (seconds > 0) 0.22f else 0.08f),
-                animationSpec = tween(durationMillis = 300),
-                label = "barColor"
-            )
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(4.dp))
-                    .selectable(selected = isSelected, role = Role.RadioButton, onClick = { onSelect(daysAgo) })
-                    .semantics { contentDescription = "${dayLabel(daysAgo)}, ${seconds / 60} minutes, $date" },
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                    contentAlignment = Alignment.BottomCenter
-                ) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().fillMaxHeight(animatedHeightFrac)
-                            .background(animatedColor, RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
-                    )
-                }
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    text = date.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.getDefault()),
-                    color = if (isSelected) GuardMintAccent else GuardTextSecondary,
-                    fontSize = 9.sp,
-                    lineHeight = 12.sp,
-                    letterSpacing = 0.sp,
-                    maxLines = 1
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun MindfulUsageCard(stats: DashboardStats, selectedOffset: Int, modifier: Modifier = Modifier, isSarcasticMode: Boolean = false) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = if (isSarcasticMode) Color.Red.copy(alpha = 0.15f) else GuardSurface),
-        shape = RoundedCornerShape(32.dp),
-        modifier = modifier
-            .fillMaxWidth()
-            .height(208.dp)
-            .border(BorderStroke(1.dp, if (isSarcasticMode) Color.Red.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.05f)), RoundedCornerShape(32.dp))
-    ) {
-        Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = if (isSarcasticMode) "MINDLESS USAGE" else "USAGE",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = GuardTextSecondary,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp
-                    )
-                )
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .background(GuardBlack, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Star,
-                        contentDescription = "Usage icon",
-                        tint = GuardMintAccent,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            val dayMinutes = dailyUsageMinutes(stats, selectedOffset)
-            val daySessions = stats.historyIndex.on(stats.referenceDate.minusDays(selectedOffset.toLong())).choices
-
-            Row(
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                val animatedMinutes by androidx.compose.animation.core.animateIntAsState(
-                    targetValue = dayMinutes,
-                    animationSpec = androidx.compose.animation.core.tween(durationMillis = 700, easing = androidx.compose.animation.core.FastOutSlowInEasing),
-                    label = "minutesCounter"
-                )
-                Text(
-                    text = animatedMinutes.toString(),
-                    fontSize = 52.sp,
-                    fontWeight = FontWeight.Light,
-                    color = Color.White,
-                    lineHeight = 52.sp
-                )
-                Text(
-                    text = "min",
-                    fontSize = 20.sp,
-                    color = GuardTextSecondary,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = if (isSarcasticMode)
-                    "${dayLabel(selectedOffset)} · $daySessions plot twist${if (daySessions == 1) "" else "s"}"
-                else
-                    "${dayLabel(selectedOffset)} · $daySessions decision${if (daySessions == 1) "" else "s"}",
-                color = GuardTextSecondary,
-                fontSize = 14.sp
-            )
-
-            Spacer(modifier = Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-fun AppUsageInsightCard(stats: DashboardStats, selectedOffset: Int, modifier: Modifier = Modifier, isSarcasticMode: Boolean = false) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = if (isSarcasticMode) Color.Red.copy(alpha = 0.15f) else GuardSurface),
-        shape = RoundedCornerShape(32.dp),
-        modifier = modifier
-            .fillMaxWidth()
-            .height(208.dp)
-            .border(BorderStroke(1.dp, if (isSarcasticMode) Color.Red.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.05f)), RoundedCornerShape(32.dp))
-    ) {
-        Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = if (isSarcasticMode) "ATTENTION INVOICES" else "APP USAGE",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = GuardTextSecondary,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
-                        )
-                    )
-                    Text(
-                        text = dayLabel(selectedOffset),
-                        color = GuardMintAccent,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .background(GuardBlack, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.List,
-                        contentDescription = "App Usage",
-                        tint = GuardMintAccent,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            AnimatedContent(
-                targetState = selectedOffset,
-                transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(200)) },
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                label = "appUsageDay"
-            ) { offset ->
-                val appTimes = stats.historyIndex.on(stats.referenceDate.minusDays(offset.toLong())).topApps
-                if (appTimes.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            if (isSarcasticMode) "Nothing wasted here. Suspicious." else "No usage on this day.",
-                            color = GuardTextSecondary,
-                            fontSize = 14.sp,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                } else {
-                    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
-                        appTimes.forEach { (appName, minutes) ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 2.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = appName,
-                                    color = Color.White,
-                                    fontSize = 15.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    text = "$minutes min",
-                                    color = GuardMintAccent,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-        }
-    }
-}
-
-@Composable
-fun InterventionBehaviorCard(stats: DashboardStats, selectedOffset: Int, modifier: Modifier = Modifier, isSarcasticMode: Boolean = false) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = if (isSarcasticMode) Color.Red.copy(alpha = 0.15f) else GuardSurface),
-        shape = RoundedCornerShape(32.dp),
-        modifier = modifier
-            .fillMaxWidth()
-            .height(208.dp)
-            .testTag("behavior-card")
-            .border(BorderStroke(1.dp, if (isSarcasticMode) Color.Red.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.05f)), RoundedCornerShape(32.dp))
-    ) {
-        Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = if (isSarcasticMode) "THE RECEIPTS" else "INTERVENTION BEHAVIOR",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = GuardTextSecondary,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.sp
-                        )
-                    )
-                    Text(
-                        text = dayLabel(selectedOffset),
-                        color = GuardMintAccent,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .background(GuardBlack, CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Face,
-                        contentDescription = "Behavior",
-                        tint = GuardMintAccent,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            AnimatedContent(
-                targetState = selectedOffset,
-                transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(200)) },
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                label = "behaviorDay"
-            ) { offset ->
-                val behavior = stats.historyIndex.on(stats.referenceDate.minusDays(offset.toLong())).behavior
-                val resistedCount = behavior.closed
-                val extendedCount = behavior.extended
-                val bypassedCount = behavior.bypassed
-                val total = behavior.total
-                val score = behavior.stopRate ?: 0
-                val scoreColor = when {
-                    total == 0 -> GuardTextSecondary
-                    score >= 80 -> GuardMintAccent
-                    score >= 50 -> Color(0xFF81D4FA)
-                    else -> Color(0xFFEF5350)
-                }
-                val scoreLabel = if (isSarcasticMode) {
-                    when {
-                        total == 0 -> "Nothing to judge... yet"
-                        score >= 80 -> "Ugh, fine. Impressive."
-                        score >= 50 -> "Barely holding on"
-                        else -> "Goalposts on wheels"
-                    }
-                } else {
-                    when {
-                        total == 0 -> "No intercepts on this day"
-                        score >= 80 -> "Strong self-control"
-                        score >= 50 -> "Holding the line"
-                        else -> "Room to improve"
-                    }
-                }
-                val animatedScore by androidx.compose.animation.core.animateIntAsState(
-                    targetValue = score,
-                    animationSpec = androidx.compose.animation.core.tween(600, easing = androidx.compose.animation.core.FastOutSlowInEasing),
-                    label = "behaviorScore"
-                )
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.testTag("behavior-score")) {
-                            Text(
-                                text = if (total == 0) "—" else animatedScore.toString(),
-                                fontSize = 32.sp,
-                                fontWeight = FontWeight.Light,
-                                color = Color.White,
-                                lineHeight = 32.sp
-                            )
-                            if (total > 0) {
-                                Text(
-                                    text = "%",
-                                    fontSize = 13.sp,
-                                    color = GuardTextSecondary,
-                                    modifier = Modifier.padding(bottom = 3.dp, start = 2.dp)
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = scoreLabel,
-                                color = scoreColor,
-                                fontSize = 12.sp,
-                                lineHeight = 16.sp,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = if (isSarcasticMode) "Times you meant it" else "Stop rate",
-                                color = GuardTextSecondary,
-                                fontSize = 11.sp,
-                                lineHeight = 14.sp,
-                                fontFamily = FontFamily.Monospace,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag("behavior-counts"),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        BehaviorStat("Resisted", resistedCount, GuardMintAccent, Modifier.weight(1f))
-                        BehaviorStat("Extended", extendedCount, Color(0xFF81D4FA), Modifier.weight(1f))
-                        BehaviorStat("Bypassed", bypassedCount, Color(0xFFEF5350), Modifier.weight(1f))
-                    }
-                }
-            }
-
-        }
-    }
-}
-
-@Composable
-fun BehaviorStat(label: String, count: Int, color: Color, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.semantics(mergeDescendants = true) { contentDescription = "$label: $count" }, horizontalAlignment = Alignment.Start) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .background(color, CircleShape)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text = count.toString(),
-                color = Color.White,
-                fontSize = 16.sp,
-                lineHeight = 20.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
-        }
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = label,
-            color = GuardTextSecondary,
-            fontSize = 10.sp,
-            lineHeight = 14.sp,
-            fontFamily = FontFamily.Monospace,
-            letterSpacing = 0.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun WeeklySummaryCard(stats: DashboardStats, modifier: Modifier = Modifier) {
-    val logs = stats.recentLogs
-
-    var selectedWeekEnd by rememberSaveable { mutableStateOf<Long?>(null) }
-    var showWeekPicker by remember { mutableStateOf(false) }
-    val weekEnd = selectedWeekEnd?.let(LocalDate::ofEpochDay)?.coerceAtMost(stats.referenceDate) ?: stats.referenceDate
-    val weekEndOffset = ChronoUnit.DAYS.between(weekEnd, stats.referenceDate).toInt()
-    val summary = remember(stats.historyIndex, weekEnd) { stats.historyIndex.weekEnding(weekEnd) }
-    val weekResisted = summary.resisted
-    val weekMinutes = summary.seconds / 60
-    val bestDayLabel = summary.bestDay?.let { date ->
-        if (weekEndOffset == 0) dayLabel(ChronoUnit.DAYS.between(date, stats.referenceDate).toInt())
-        else date.format(java.time.format.DateTimeFormatter.ofPattern("d MMM"))
-    } ?: "—"
-    val screenTimeLabel = if (weekMinutes >= 60) "${weekMinutes / 60}h ${weekMinutes % 60}m" else "${weekMinutes}m"
-
-    if (showWeekPicker) {
-        val today = stats.referenceDate
-        val firstYear = minOf(stats.historyIndex.days.keys.minOrNull()?.year ?: today.year, today.year - 1) - 1
-        val selectableDates = remember(today, firstYear) {
-            object : SelectableDates {
-                override fun isSelectableDate(utcTimeMillis: Long): Boolean =
-                    HistoryDates.canSelect(utcTimeMillis, today) &&
-                        HistoryDates.pickerDate(utcTimeMillis).minusDays(6).year >= firstYear
-                override fun isSelectableYear(year: Int): Boolean = year <= today.year
-            }
-        }
-        val initialRange = remember(weekEnd) { HistoryDates.weekRange(weekEnd) }
-        val rangeState = rememberDateRangePickerState(
-            initialSelectedStartDateMillis = initialRange.first,
-            initialSelectedEndDateMillis = initialRange.second,
-            initialDisplayedMonthMillis = initialRange.second,
-            yearRange = firstYear..today.year,
-            selectableDates = selectableDates
-        )
-        // A single tap should highlight the whole 7-day week ending on that day. Whenever the
-        // picker reports only a start (a fresh tap), snap the selection to [tap-6days, tap] so
-        // the week fills in. Once the end is set we stop overriding, so there's no loop.
-        LaunchedEffect(rangeState) {
-            snapshotFlow { rangeState.selectedStartDateMillis to rangeState.selectedEndDateMillis }
-                .collect { (start, end) ->
-                    if (start != null) {
-                        val selection = HistoryDates.weekRange(HistoryDates.pickerDate(end ?: start))
-                        if (start != selection.first || end != selection.second) {
-                            rangeState.setSelection(selection.first, selection.second)
-                        }
-                    }
-                }
-        }
-        androidx.compose.ui.window.Dialog(
-            onDismissRequest = { showWeekPicker = false },
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth(0.9f)
-                    .fillMaxHeight(0.75f),
-                shape = RoundedCornerShape(24.dp),
-                color = GuardSurface,
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
-            ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    DateRangePicker(
-                        state = rangeState,
-                        modifier = Modifier.weight(1f),
-                        showModeToggle = false,
-                        title = {
-                            Text(
-                                text = "SELECTED WEEK",
-                                modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp),
-                                color = GuardTextSecondary,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 12.sp
-                            )
-                        },
-                        headline = {
-                            val end = rangeState.selectedEndDateMillis
-                            Text(
-                                text = if (end != null) weekRangeLabel(offsetFromPickedUtcMillis(end)) else "Pick a day",
-                                modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 12.dp),
-                                color = Color.White,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        },
-                        colors = DatePickerDefaults.colors(
-                            containerColor = GuardSurface,
-                            titleContentColor = GuardTextSecondary,
-                            headlineContentColor = Color.White,
-                            weekdayContentColor = GuardTextSecondary,
-                            subheadContentColor = GuardMintAccent,
-                            dayContentColor = Color.White,
-                            selectedDayContainerColor = GuardMintAccent,
-                            selectedDayContentColor = GuardBlack,
-                            todayContentColor = GuardMintAccent,
-                            todayDateBorderColor = GuardMintAccent,
-                            dayInSelectionRangeContainerColor = GuardMintAccent.copy(alpha = 0.22f),
-                            dayInSelectionRangeContentColor = Color.White
-                        )
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(onClick = { showWeekPicker = false }) {
-                            Text("Cancel", color = GuardTextSecondary)
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        TextButton(
-                            onClick = {
-                                val end = rangeState.selectedEndDateMillis
-                                if (end != null && HistoryDates.canSelect(end, LocalDate.now())) {
-                                    selectedWeekEnd = HistoryDates.pickerDate(end).toEpochDay()
-                                }
-                                showWeekPicker = false
-                            },
-                            enabled = rangeState.selectedEndDateMillis != null
-                        ) {
-                            Text("Select week", color = GuardMintAccent, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Card(
-        colors = CardDefaults.cardColors(containerColor = GuardSurface),
-        shape = RoundedCornerShape(20.dp),
-        modifier = modifier
-            .fillMaxWidth()
-            .border(BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.15f)), RoundedCornerShape(20.dp))
-    ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(GuardMintAccent.copy(alpha = 0.08f))
-                        .border(BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.2f)), CircleShape)
-                        .clickable { showWeekPicker = true },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.DateRange,
-                        contentDescription = "Select week",
-                        tint = GuardMintAccent,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = if (weekEndOffset == 0) "THIS WEEK" else "SELECTED WEEK",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = GuardMintAccent,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 1.sp
-                    )
-                    Text(
-                        text = if (weekEndOffset == 0) "Your last 7 days" else weekRangeLabel(weekEndOffset),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = GuardTextSecondary
-                    )
-                }
-                if (weekEndOffset != 0) {
-                    Text(
-                        text = "This week",
-                        color = GuardMintAccent,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { selectedWeekEnd = null }
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                WeeklyStatItem(label = "Best Day", value = bestDayLabel)
-                WeeklyStatItem(label = "Resisted", value = weekResisted.toString())
-                WeeklyStatItem(label = "Screen Time", value = screenTimeLabel)
-            }
-        }
-    }
-}
-
-@Composable
-private fun WeeklyStatItem(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.Start) {
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            color = Color.White,
-            fontFamily = FontFamily.Monospace
-        )
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = GuardTextSecondary,
-            fontFamily = FontFamily.Monospace,
-            letterSpacing = 0.5.sp
-        )
     }
 }
