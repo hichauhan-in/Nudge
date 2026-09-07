@@ -180,6 +180,10 @@ fun MainScreen() {
     var consentDecisionMade by remember { mutableStateOf(AccessibilityConsent.hasDecision(context)) }
     var hasConsent by remember { mutableStateOf(AccessibilityConsent.isAccepted(context)) }
     var disclosureRequested by remember { mutableStateOf(false) }
+    val requestAccessibility = {
+        if (AccessibilityConsent.isAccepted(context)) openAccessibilitySettings(context)
+        else disclosureRequested = true
+    }
 
     DisposableEffect(prefs) {
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
@@ -368,13 +372,11 @@ fun MainScreen() {
             ) {
                 Crossfade(targetState = currentScreen, label = "ScreenTransition") { targetScreen ->
                     when (targetScreen) {
-                        NavigationScreen.Dashboard -> DashboardView(viewModel, isServiceEnabled, context) {
-                            disclosureRequested = true
-                        }
+                        NavigationScreen.Dashboard -> DashboardView(viewModel, isServiceEnabled, context, requestAccessibility)
                         NavigationScreen.MonitoredApps -> MonitoredAppsView(viewModel)
                         NavigationScreen.Settings -> SettingsView(
                             viewModel, isServiceEnabled, context,
-                            onRequestAccessibility = { disclosureRequested = true },
+                            onRequestAccessibility = requestAccessibility,
                             onNavigateToAppInfo = { currentScreen = NavigationScreen.AppInfo }
                         )
                         NavigationScreen.AppInfo -> HowItWorksScrollView()
@@ -941,53 +943,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            Card(
-                colors = CardDefaults.cardColors(containerColor = GuardSurface),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.05f)), RoundedCornerShape(16.dp))
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onRequestAccessibility)
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(if (isServiceEnabled) GuardMintAccent.copy(alpha = 0.12f) else GuardTextPrimary.copy(alpha = 0.12f), CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isServiceEnabled) Icons.Default.Check else Icons.Default.Warning,
-                            contentDescription = "Accessibility Status",
-                            tint = if (isServiceEnabled) GuardMintAccent else GuardTextPrimary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Enable Guard System Service",
-                            fontWeight = FontWeight.Bold,
-                            color = GuardTextPrimary
-                        )
-                        Text(
-                            text = "Android Accessibility Permission Requirement",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = GuardTextSecondary
-                        )
-                    }
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "Go",
-                        tint = GuardTextSecondary
-                    )
-                }
-            }
+            com.example.ui.MonitoringControls(isServiceEnabled, onRequestAccessibility)
 
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -1174,6 +1130,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
             Spacer(modifier = Modifier.height(16.dp))
 
             com.example.ui.ScheduleProfilesControls()
+            Spacer(modifier = Modifier.height(12.dp))
             val appsForBudgets by viewModel.installedApps.collectAsStateWithLifecycle()
             com.example.ui.SharedBudgetControls(appsForBudgets.filter { it.isMonitored })
 

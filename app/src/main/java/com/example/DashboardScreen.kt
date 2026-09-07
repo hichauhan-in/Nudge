@@ -226,9 +226,6 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
             Spacer(modifier = Modifier.height(20.dp))
         }
 
-        com.example.ui.MonitoringControls(isServiceEnabled, onRequestAccessibility)
-        Spacer(Modifier.height(8.dp))
-
         // One universal day selector (its graph sits just below the carousel) that drives the
         // whole dashboard: the carousel cards AND the intercept log further down all read from
         // this single selected day, so there's only one graph and no per-card duplicates.

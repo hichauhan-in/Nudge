@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -387,77 +388,56 @@ class OverlayActivity : ComponentActivity() {
 
 @Composable
 internal fun SupportMenu(expanded: Boolean, onToggle: () -> Unit, onDismiss: () -> Unit, onUpi: () -> Unit, onKofi: () -> Unit) {
-    Box {
-        FilledTonalIconButton(onClick = onToggle, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Default.Coffee, "Optional support")
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, modifier = Modifier.widthIn(max = 240.dp)) {
-            DropdownMenuItem(text = { Text("UPI") }, onClick = onUpi)
-            DropdownMenuItem(text = { Text("Ko-fi") }, onClick = onKofi)
-            DropdownMenuItem(text = { Text("Playto unavailable") }, onClick = {}, enabled = false)
+    BackHandler(enabled = expanded, onBack = onDismiss)
+    CompositionLocalProvider(
+        androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
+    ) {
+        Row(
+            modifier = Modifier.width(160.dp).height(48.dp).testTag("support-actions"),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandHorizontally(expandFrom = Alignment.End, animationSpec = tween(220)) + fadeIn(tween(180)),
+                exit = shrinkHorizontally(shrinkTowards = Alignment.End, animationSpec = tween(160)) + fadeOut(tween(120))
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SupportIconButton("Ko-fi", "support-kofi", onClick = { onDismiss(); onKofi() }) {
+                        Icon(androidx.compose.ui.res.painterResource(com.example.R.drawable.ic_pay_kofi), "Ko-fi",
+                            tint = Color.Unspecified, modifier = Modifier.size(24.dp).testTag("support-kofi-icon"))
+                    }
+                    SupportIconButton("UPI", "support-upi", onClick = { onDismiss(); onUpi() }) {
+                        Icon(androidx.compose.ui.res.painterResource(com.example.R.drawable.ic_pay_upi), "UPI",
+                            tint = Color.Unspecified, modifier = Modifier.size(24.dp).testTag("support-upi-icon"))
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            SupportIconButton("Optional support", "support-toggle", onClick = onToggle) {
+                Icon(Icons.Default.Coffee, "Optional support", tint = GuardMintAccent,
+                    modifier = Modifier.size(24.dp).testTag("support-toggle-icon"))
+            }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DonateOptionChip(
-    visible: Boolean,
-    delayMillis: Int,
-    iconRes: Int,
-    label: String,
-    enabled: Boolean,
-    onClick: () -> Unit
-) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(animationSpec = tween(200, delayMillis)) +
-            slideInHorizontally(animationSpec = tween(300, delayMillis)) { it } +
-            scaleIn(
-                animationSpec = tween(300, delayMillis),
-                initialScale = 0.7f,
-                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0.5f)
-            ),
-        exit = fadeOut(animationSpec = tween(120)) +
-            slideOutHorizontally(animationSpec = tween(160)) { it / 2 }
+private fun SupportIconButton(label: String, tag: String, onClick: () -> Unit, icon: @Composable () -> Unit) {
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(label) } },
+        state = rememberTooltipState()
     ) {
-        Row(
-            modifier = Modifier
-                .padding(end = 8.dp)
-                .height(40.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(if (enabled) GuardMintAccent.copy(alpha = 0.15f) else GuardTextPrimary.copy(alpha = 0.05f))
-                .border(
-                    BorderStroke(1.dp, if (enabled) GuardMintAccent.copy(alpha = 0.4f) else GuardTextPrimary.copy(alpha = 0.08f)),
-                    RoundedCornerShape(14.dp)
-                )
-                .clickable(enabled = enabled) { onClick() }
-                .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
+        OutlinedIconButton(
+            onClick = onClick,
+            modifier = Modifier.size(48.dp).testTag(tag),
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.4f)),
+            colors = IconButtonDefaults.outlinedIconButtonColors(containerColor = GuardMintAccent.copy(alpha = 0.15f))
         ) {
-            Box(
-                modifier = Modifier
-                    .size(24.dp)
-                    .clip(RoundedCornerShape(7.dp))
-                    .background(GuardTextPrimary),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    painter = androidx.compose.ui.res.painterResource(id = iconRes),
-                    contentDescription = label,
-                    tint = Color.Unspecified,
-                    modifier = Modifier
-                        .size(16.dp)
-                        .alpha(if (enabled) 1f else 0.5f)
-                )
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = label,
-                color = if (enabled) GuardMintAccent else GuardTextSecondary,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
+            icon()
         }
     }
 }

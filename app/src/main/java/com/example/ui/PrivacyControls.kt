@@ -13,6 +13,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.domain.SessionManager
@@ -27,22 +29,16 @@ fun PrivacyControls() {
     var showReset by remember { mutableStateOf(false) }
 
     Text("PRIVACY & RECOVERY", style = MaterialTheme.typography.labelSmall, color = GuardTextSecondary, fontWeight = FontWeight.Bold)
-    Spacer(Modifier.height(8.dp))
+    Spacer(Modifier.height(12.dp))
     DataTransferControls()
-    TextButton(onClick = { showPrivacy = true }, modifier = Modifier.fillMaxWidth()) {
-        Icon(Icons.Default.PrivacyTip, null)
-        Spacer(Modifier.width(12.dp))
-        Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_privacy_data), modifier = Modifier.weight(1f))
-    }
-    TextButton(onClick = { showWithdraw = true }, modifier = Modifier.fillMaxWidth()) {
-        Icon(Icons.Default.DoNotDisturbOn, null)
-        Spacer(Modifier.width(12.dp))
-        Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_withdraw), modifier = Modifier.weight(1f))
-    }
-    TextButton(onClick = { showRecovery = true }, modifier = Modifier.fillMaxWidth()) {
-        Icon(Icons.Default.SettingsBackupRestore, null)
-        Spacer(Modifier.width(12.dp))
-        Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_recovery), modifier = Modifier.weight(1f))
+    Spacer(Modifier.height(12.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SettingsBlock(stringResource(com.example.R.string.ui_privacy_data), stringResource(com.example.R.string.ui_privacy_summary),
+            Icons.Default.PrivacyTip, onClick = { showPrivacy = true }, modifier = Modifier.testTag("setting-privacy"))
+        SettingsBlock(stringResource(com.example.R.string.ui_withdraw), stringResource(com.example.R.string.ui_withdraw_summary),
+            Icons.Default.DoNotDisturbOn, onClick = { showWithdraw = true }, modifier = Modifier.testTag("setting-withdraw"))
+        SettingsBlock(stringResource(com.example.R.string.ui_recovery), stringResource(com.example.R.string.ui_recovery_summary),
+            Icons.Default.SettingsBackupRestore, onClick = { showRecovery = true }, modifier = Modifier.testTag("setting-recovery"))
     }
 
     if (showPrivacy) {

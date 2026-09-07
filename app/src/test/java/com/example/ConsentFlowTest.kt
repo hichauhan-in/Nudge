@@ -60,4 +60,40 @@ class ConsentFlowTest {
             assertNull(shadowOf(compose.activity).nextStartedActivity)
         }
     }
+
+    @Test
+    fun configuredUserOpensMonitoringSettingsWithoutRepeatingConsent() {
+        compose.onNodeWithText("Continue").performClick()
+        compose.onNodeWithText("Agree and enable").performClick()
+        compose.runOnIdle {
+            assertEquals(Settings.ACTION_ACCESSIBILITY_SETTINGS, shadowOf(compose.activity).nextStartedActivity?.action)
+            Settings.Secure.putString(compose.activity.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                android.content.ComponentName(compose.activity, com.example.service.AppAccessibilityService::class.java).flattenToString())
+            com.example.service.AppAccessibilityService.connected.value = true
+        }
+        try {
+            compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+            compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+            compose.onNodeWithText("Skip / Proceed").performClick()
+            compose.onNodeWithText("Monitoring status").assertDoesNotExist()
+            compose.onNodeWithText("Configure").performClick()
+            compose.onNodeWithText("Guard System Service").performClick()
+            compose.onNodeWithText("Monitoring status").assertIsDisplayed()
+            compose.onNodeWithText("Agree and enable").assertDoesNotExist()
+            compose.onNodeWithText("Decline").assertDoesNotExist()
+            compose.runOnIdle { assertNull(shadowOf(compose.activity).nextStartedActivity) }
+            compose.onNodeWithText("Disable guard service").performScrollTo().performClick()
+            compose.onNodeWithText("Disable guard service").performClick()
+            compose.runOnIdle {
+                assertFalse(AccessibilityConsent.isAccepted(compose.activity))
+                assertFalse(SessionManager.isMasterGuardEnabled.value)
+            }
+            compose.onNodeWithText("Enable Guard System Service").performClick()
+            compose.onNodeWithText("Review accessibility access").performClick()
+            compose.onNodeWithText("Agree and enable").assertIsDisplayed()
+            compose.onNodeWithText("Decline").assertIsDisplayed()
+        } finally {
+            com.example.service.AppAccessibilityService.connected.value = false
+        }
+    }
 }

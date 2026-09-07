@@ -14,6 +14,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -106,16 +108,15 @@ fun DataTransferControls() {
     val restorePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) { action = TransferAction.RESTORE; pendingUri = uri.toString() }
     }
-    Column(Modifier.fillMaxWidth()) {
-        TextButton(onClick = { confirmCsv = true }, enabled = !status.busy, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.Download, null); Spacer(Modifier.width(12.dp)); Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_export_csv), Modifier.weight(1f))
-        }
-        TextButton(onClick = { backupPicker.launch("nudge-${java.time.LocalDate.now()}.nudgebak") }, enabled = !status.busy, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.Lock, null); Spacer(Modifier.width(12.dp)); Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_backup), Modifier.weight(1f))
-        }
-        TextButton(onClick = { restorePicker.launch(arrayOf("application/octet-stream", "application/*")) }, enabled = !status.busy, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.Restore, null); Spacer(Modifier.width(12.dp)); Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_restore_backup), Modifier.weight(1f))
-        }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SettingsBlock(stringResource(com.example.R.string.ui_export_csv), stringResource(com.example.R.string.ui_export_summary),
+            Icons.Default.Download, onClick = { confirmCsv = true }, enabled = !status.busy, modifier = Modifier.testTag("setting-export"))
+        SettingsBlock(stringResource(com.example.R.string.ui_backup), stringResource(com.example.R.string.ui_backup_summary),
+            Icons.Default.Lock, onClick = { backupPicker.launch("nudge-${java.time.LocalDate.now()}.nudgebak") },
+            enabled = !status.busy, modifier = Modifier.testTag("setting-backup"))
+        SettingsBlock(stringResource(com.example.R.string.ui_restore_backup), stringResource(com.example.R.string.ui_restore_summary),
+            Icons.Default.Restore, onClick = { restorePicker.launch(arrayOf("application/octet-stream", "application/*")) },
+            enabled = !status.busy, modifier = Modifier.testTag("setting-restore"))
         status.message?.let { Text(it, color = GuardTextSecondary, style = MaterialTheme.typography.bodySmall) }
     }
     if (confirmCsv) {

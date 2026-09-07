@@ -6,6 +6,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.*
@@ -47,7 +49,8 @@ class FeatureLayoutTest {
             MyApplicationTheme(darkTheme = false) { Surface(color = GuardBlack) { DashboardView(model, false, context, {}) } }
         }
         compose.onNodeWithContentDescription("Automatic monitoring").assertIsOff()
-        compose.onNodeWithText("Monitoring status").assertIsDisplayed()
+        compose.onNodeWithText("Monitoring status").assertDoesNotExist()
+        compose.onNodeWithText("Preview prompt").assertDoesNotExist()
         compose.onRoot().savePreview("dashboard-light")
     }
 
@@ -86,17 +89,34 @@ class FeatureLayoutTest {
         compose.onRoot().savePreview("expiry-extension-limit")
     }
 
-    @Test fun supportMenuFitsNarrowScreenWithoutAHorizontalButtonRow() {
+    @Test fun supportOptionsFitLeftOfAnUnmovingCoffeeButton() {
         compose.setContent {
+            var expanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
             MyApplicationTheme {
-                Box(Modifier.width(288.dp).height(400.dp)) {
-                    com.example.service.SupportMenu(true, {}, {}, {}, {})
+                Box(Modifier.width(288.dp).height(400.dp), contentAlignment = androidx.compose.ui.Alignment.BottomEnd) {
+                    com.example.service.SupportMenu(expanded, { expanded = !expanded }, { expanded = false }, {}, {})
                 }
             }
         }
-        compose.onNodeWithText("UPI").assertIsDisplayed()
-        compose.onNodeWithText("Ko-fi").assertIsDisplayed()
-        compose.onNodeWithText("Playto unavailable").assertIsNotEnabled()
+        val initial = compose.onNodeWithTag("support-toggle").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("support-toggle").performClick()
+        val anchor = compose.onNodeWithTag("support-toggle").fetchSemanticsNode().boundsInRoot
+        val upi = compose.onNodeWithTag("support-upi").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val kofi = compose.onNodeWithTag("support-kofi").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertEquals(initial, anchor)
+        assertTrue(kofi.right < upi.left && upi.right < anchor.left)
+        assertEquals(anchor.top, upi.top)
+        assertEquals(anchor.top, kofi.top)
+        listOf("support-toggle", "support-upi", "support-kofi").forEach {
+            compose.onNodeWithTag(it).assertWidthIsEqualTo(48.dp).assertHeightIsEqualTo(48.dp)
+            compose.onNodeWithTag("$it-icon", useUnmergedTree = true).assertWidthIsEqualTo(24.dp).assertHeightIsEqualTo(24.dp)
+        }
+        compose.onNodeWithText("Playto unavailable").assertDoesNotExist()
+        compose.onNode(isPopup()).assertDoesNotExist()
+        compose.onRoot().savePreview("support-options-left")
+        compose.onNodeWithTag("support-toggle").performClick()
+        compose.onNodeWithTag("support-upi").assertDoesNotExist()
+        compose.onNodeWithTag("support-kofi").assertDoesNotExist()
     }
 
     @Test fun profileEditorAndBudgetControlsFitNarrowSurfaces() {
@@ -107,14 +127,23 @@ class FeatureLayoutTest {
                 AppRuleControls("test")
             } } }
         }
+        compose.onNodeWithTag("setting-profiles").assertIsDisplayed()
+        compose.onNodeWithTag("setting-shared-budgets").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Edit Work").assertDoesNotExist()
         compose.onNodeWithText("Schedules and profiles").performClick()
+        compose.onAllNodes(isDialog()).assertCountEquals(1)
         compose.onNodeWithContentDescription("Edit Work").performClick()
+        compose.onAllNodes(isDialog()).assertCountEquals(1)
         compose.onNodeWithText("Save").assertIsDisplayed()
         compose.onNodeWithText("Cancel").assertIsDisplayed()
         compose.onRoot().savePreview("profile-editor")
         compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithContentDescription("Edit Work").assertIsDisplayed()
+        compose.onNodeWithText("Close").performClick()
         compose.onNodeWithText("Shared budgets and goals").performScrollTo().performClick()
-        compose.onNodeWithText("Add shared budget").performScrollTo().performClick()
+        compose.onAllNodes(isDialog()).assertCountEquals(1)
+        compose.onNodeWithText("Add shared budget").assertIsDisplayed().performClick()
+        compose.onAllNodes(isDialog()).assertCountEquals(1)
         compose.onNodeWithText("Save").assertIsNotEnabled()
         compose.onRoot().savePreview("shared-budget-editor")
     }

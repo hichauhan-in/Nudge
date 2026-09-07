@@ -11,6 +11,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.FocusSettings
@@ -57,12 +59,12 @@ internal fun <Value> RuleMenu(label: String, selected: Value, options: List<Pair
                 Text(options.firstOrNull { it.first == selected }?.second ?: selected.toString(), Modifier.weight(1f))
                 Icon(Icons.Default.ExpandMore, "Choose $label")
             }
-            DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
-                options.forEach { (value, text) ->
-                    DropdownMenuItem(text = { Text(text) }, onClick = { expanded = false; onSelect(value) },
-                        trailingIcon = { if (selected == value) Icon(Icons.Default.Check, "Selected") })
-                }
-            }
+        }
+    }
+    if (expanded) {
+        SettingsChoiceDialog(label, selected, options, onDismiss = { expanded = false }) {
+            expanded = false
+            onSelect(it)
         }
     }
 }
@@ -70,30 +72,38 @@ internal fun <Value> RuleMenu(label: String, selected: Value, options: List<Pair
 @Composable
 fun ScheduleProfilesControls() {
     val configuration by FocusSettings.configuration.collectAsStateWithLifecycle()
-    var expanded by remember { mutableStateOf(false) }
+    var showProfiles by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<FocusProfile?>(null) }
-    TextButton(onClick = { expanded = !expanded }, modifier = Modifier.fillMaxWidth()) {
-        Icon(Icons.Default.Schedule, null)
-        Spacer(Modifier.width(12.dp))
-        Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_profiles), Modifier.weight(1f))
-        Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
-    }
-    if (expanded) {
-        configuration.profiles.forEach { profile ->
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(profile.name, color = GuardTextPrimary)
-                    Text("${clockLabel(profile.schedule.startMinute)} - ${clockLabel(profile.schedule.endMinute)}", color = GuardTextSecondary)
+    val title = stringResource(com.example.R.string.ui_profiles)
+    SettingsBlock(title, stringResource(com.example.R.string.ui_profiles_summary), Icons.Default.Schedule,
+        onClick = { showProfiles = true }, modifier = Modifier.testTag("setting-profiles"))
+    if (showProfiles && editing == null) {
+        EditorDialog(
+            onDismissRequest = { showProfiles = false },
+            title = { Text(title, color = GuardTextPrimary) },
+            text = {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    configuration.profiles.forEach { profile ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(profile.name, color = GuardTextPrimary)
+                                Text("${clockLabel(profile.schedule.startMinute)} - ${clockLabel(profile.schedule.endMinute)}", color = GuardTextSecondary)
+                            }
+                            IconButton(onClick = { editing = profile }) { Icon(Icons.Default.Edit, "Edit ${profile.name}") }
+                        }
+                    }
                 }
-                IconButton(onClick = { editing = profile }) { Icon(Icons.Default.Edit, "Edit ${profile.name}") }
-            }
-        }
-        OutlinedButton(onClick = { editing = FocusProfile(UUID.randomUUID().toString(), "", FocusSchedule()) },
-            enabled = configuration.profiles.size < 30) {
-            Icon(Icons.Default.Add, null)
-            Spacer(Modifier.width(8.dp))
-            Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_add_profile))
-        }
+            },
+            confirmButton = {
+                TextButton(onClick = { editing = FocusProfile(UUID.randomUUID().toString(), "", FocusSchedule()) },
+                    enabled = configuration.profiles.size < 30) {
+                    Icon(Icons.Default.Add, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(com.example.R.string.ui_add_profile))
+                }
+            },
+            dismissButton = { TextButton(onClick = { showProfiles = false }) { Text(stringResource(com.example.R.string.ui_close)) } }
+        )
     }
     editing?.let { profile ->
         ProfileEditor(profile, onDismiss = { editing = null }, onSave = { updated ->

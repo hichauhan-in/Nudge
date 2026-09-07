@@ -12,6 +12,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -26,39 +28,46 @@ import java.util.UUID
 fun SharedBudgetControls(apps: List<AppDisplayItem>) {
     val configuration by FocusSettings.configuration.collectAsStateWithLifecycle()
     val usageRevision by SessionManager.usageRevision.collectAsStateWithLifecycle()
-    var expanded by remember { mutableStateOf(false) }
+    var showBudgets by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<SharedBudget?>(null) }
     var deleting by remember { mutableStateOf<SharedBudget?>(null) }
-    TextButton(onClick = { expanded = !expanded }, modifier = Modifier.fillMaxWidth()) {
-        Icon(Icons.Default.Apps, null)
-        Spacer(Modifier.width(12.dp))
-        Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_shared_goals), Modifier.weight(1f))
-        Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
-    }
-    if (expanded) {
-        configuration.budgets.forEach { budget ->
-            val used = remember(budget, usageRevision) { budget.packages.sumOf { SessionManager.getQuotaConsumedSecondsToday(it).toLong() } / 60 }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(budget.name, color = GuardTextPrimary)
-                    Text("$used / ${budget.minutes} min today", color = GuardTextSecondary)
+    val title = stringResource(com.example.R.string.ui_shared_goals)
+    SettingsBlock(title, stringResource(com.example.R.string.ui_shared_goals_summary), Icons.Default.Apps,
+        onClick = { showBudgets = true }, modifier = Modifier.testTag("setting-shared-budgets"))
+    if (showBudgets && editing == null && deleting == null) {
+        EditorDialog(
+            onDismissRequest = { showBudgets = false },
+            title = { Text(title, color = GuardTextPrimary) },
+            text = {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    configuration.budgets.forEach { budget ->
+                        val used = remember(budget, usageRevision) { budget.packages.sumOf { SessionManager.getQuotaConsumedSecondsToday(it).toLong() } / 60 }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(budget.name, color = GuardTextPrimary)
+                                Text("$used / ${budget.minutes} min today", color = GuardTextSecondary)
+                            }
+                            IconButton(onClick = { editing = budget }) { Icon(Icons.Default.Edit, "Edit ${budget.name}") }
+                            IconButton(onClick = { deleting = budget }) { Icon(Icons.Default.Delete, "Delete ${budget.name}") }
+                        }
+                    }
+                    if (apps.isEmpty()) Text("No monitored apps", color = GuardTextSecondary)
+                    RuleMenu(stringResource(com.example.R.string.ui_week_goal), configuration.weeklyGoalMinutes,
+                        listOf(0 to stringResource(com.example.R.string.ui_off)) + listOf(210, 420, 630, 840, 1260, 1680, 2520).map { it to "${it / 60}h ${it % 60}m" }) {
+                        FocusSettings.update(configuration.copy(weeklyGoalMinutes = it))
+                    }
                 }
-                IconButton(onClick = { editing = budget }) { Icon(Icons.Default.Edit, "Edit ${budget.name}") }
-                IconButton(onClick = { deleting = budget }) { Icon(Icons.Default.Delete, "Delete ${budget.name}") }
-            }
-        }
-        OutlinedButton(onClick = { editing = SharedBudget(UUID.randomUUID().toString(), "", 45, emptySet()) },
-            enabled = apps.isNotEmpty() && configuration.budgets.size < 30) {
-            Icon(Icons.Default.Add, null)
-            Spacer(Modifier.width(8.dp))
-            Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_add_budget))
-        }
-        if (apps.isEmpty()) Text("No monitored apps", color = GuardTextSecondary)
-        Spacer(Modifier.height(12.dp))
-        RuleMenu(androidx.compose.ui.res.stringResource(com.example.R.string.ui_week_goal), configuration.weeklyGoalMinutes,
-            listOf(0 to androidx.compose.ui.res.stringResource(com.example.R.string.ui_off)) + listOf(210, 420, 630, 840, 1260, 1680, 2520).map { it to "${it / 60}h ${it % 60}m" }) {
-            FocusSettings.update(configuration.copy(weeklyGoalMinutes = it))
-        }
+            },
+            confirmButton = {
+                TextButton(onClick = { editing = SharedBudget(UUID.randomUUID().toString(), "", 45, emptySet()) },
+                    enabled = apps.isNotEmpty() && configuration.budgets.size < 30) {
+                    Icon(Icons.Default.Add, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(com.example.R.string.ui_add_budget))
+                }
+            },
+            dismissButton = { TextButton(onClick = { showBudgets = false }) { Text(stringResource(com.example.R.string.ui_close)) } }
+        )
     }
     editing?.let { budget ->
         BudgetEditor(budget, apps, configuration.budgets.filterNot { it.id == budget.id }.flatMap { it.packages }.toSet(),

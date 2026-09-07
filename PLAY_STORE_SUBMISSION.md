@@ -31,7 +31,7 @@ This is a release checklist, not a promise of Google approval. The previously re
 
 1. Fresh install, launch Nudge, tap Continue, show the complete disclosure and both buttons. Slowly scroll through all disclosure paragraphs.
 2. Tap Decline. Show that onboarding/home remains usable and automatic monitoring is off.
-3. Reopen the disclosure from Home monitoring status or Configure. Press Back, reopen, press Home, and return: no consent is recorded.
+3. After declining, reopen the disclosure through Configure > Enable Guard System Service > Review accessibility access, or the Home accessibility warning. Press Back, reopen, press Home, and return: no consent is recorded. Once access is enabled, Configure > Guard System Service opens monitoring status and disable/pause controls, not another consent request.
 4. Tap Agree and enable, then separately enable Nudge in Android Accessibility settings.
 5. Select a launchable app, open it, show the prompt, start a short timer, and show the countdown notification. Demonstrate close, extend, and deliberate bypass.
 6. Show a small daily/shared budget or a configured schedule using deterministic user choices. Show that Android Settings and uninstall remain accessible.
