@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Nudge!",
+  "description": "Sometimes all we need is a Nudge!\nA lightweight, local, mindfully disruptive solution for reducing app addiction.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
