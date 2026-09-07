@@ -1,9 +1,5 @@
 package com.example.ui
 
-import android.app.ActivityManager
-import android.content.Intent
-import android.net.Uri
-import android.provider.Settings
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -12,7 +8,6 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -22,13 +17,10 @@ import com.example.ui.theme.*
 
 @Composable
 fun PrivacyControls() {
-    val context = LocalContext.current
     var showPrivacy by remember { mutableStateOf(false) }
     var showWithdraw by remember { mutableStateOf(false) }
-    var showRecovery by remember { mutableStateOf(false) }
-    var showReset by remember { mutableStateOf(false) }
 
-    Text("PRIVACY & RECOVERY", style = MaterialTheme.typography.labelSmall, color = GuardTextSecondary, fontWeight = FontWeight.Bold)
+    Text(stringResource(com.example.R.string.ui_privacy_section), style = MaterialTheme.typography.labelSmall, color = GuardTextSecondary, fontWeight = FontWeight.Bold)
     Spacer(Modifier.height(12.dp))
     DataTransferControls()
     Spacer(Modifier.height(12.dp))
@@ -37,15 +29,13 @@ fun PrivacyControls() {
             Icons.Default.PrivacyTip, onClick = { showPrivacy = true }, modifier = Modifier.testTag("setting-privacy"))
         SettingsBlock(stringResource(com.example.R.string.ui_withdraw), stringResource(com.example.R.string.ui_withdraw_summary),
             Icons.Default.DoNotDisturbOn, onClick = { showWithdraw = true }, modifier = Modifier.testTag("setting-withdraw"))
-        SettingsBlock(stringResource(com.example.R.string.ui_recovery), stringResource(com.example.R.string.ui_recovery_summary),
-            Icons.Default.SettingsBackupRestore, onClick = { showRecovery = true }, modifier = Modifier.testTag("setting-recovery"))
     }
 
     if (showPrivacy) {
         AlertDialog(
             onDismissRequest = { showPrivacy = false },
             containerColor = GuardSurface,
-            title = { Text("Privacy policy") },
+            title = { Text(stringResource(com.example.R.string.ui_privacy_data)) },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Nudge! by hichauhan. Updated 7 September 2026.")
@@ -76,48 +66,6 @@ fun PrivacyControls() {
                 }) { Text("Withdraw consent") }
             },
             dismissButton = { TextButton(onClick = { showWithdraw = false }) { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_cancel)) } }
-        )
-    }
-    if (showRecovery) {
-        AlertDialog(
-            onDismissRequest = { showRecovery = false },
-            containerColor = GuardSurface,
-            title = { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_recovery)) },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("You remain in control. Android Settings and uninstall screens are never guarded by Nudge!.")
-                    Text("To remove access: Android Settings > Accessibility > Installed apps > Nudge! > Off. Labels vary by device.")
-                    Text("To reset or uninstall: Android Settings > Apps > Nudge! > Storage > Clear storage, or Uninstall. Force stop is available if the app is unresponsive. A factory reset is not needed.")
-                    OutlinedButton(onClick = { SessionManager.setMasterGuardEnabled(false) }, modifier = Modifier.fillMaxWidth()) {
-                        Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_pause))
-                    }
-                    OutlinedButton(onClick = {
-                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
-                        try { context.startActivity(intent) } catch (_: android.content.ActivityNotFoundException) {
-                            android.widget.Toast.makeText(context, "Open Android Settings > Apps > Nudge!", android.widget.Toast.LENGTH_LONG).show()
-                        }
-                    }, modifier = Modifier.fillMaxWidth()) { Text("Open Android app settings") }
-                    TextButton(onClick = { showRecovery = false; showReset = true }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Clear all local app data", color = MaterialTheme.colorScheme.error)
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showRecovery = false }) { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_close)) } }
-        )
-    }
-    if (showReset) {
-        AlertDialog(
-            onDismissRequest = { showReset = false },
-            containerColor = GuardSurface,
-            title = { Text("Erase all local data?") },
-            text = { Text("This permanently deletes your history, monitored apps, timers, preferences, and consent. Nudge! will close and start fresh next time. This cannot be undone.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    SessionManager.withdrawConsent()
-                    context.getSystemService(ActivityManager::class.java).clearApplicationUserData()
-                }) { Text("Erase all data", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = { TextButton(onClick = { showReset = false }) { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_cancel)) } }
         )
     }
 }

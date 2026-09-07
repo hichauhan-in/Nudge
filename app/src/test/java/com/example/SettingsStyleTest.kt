@@ -84,15 +84,29 @@ class SettingsStyleTest {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) { PrivacyControls() }
             } }
         }
-        listOf("setting-export", "setting-backup", "setting-restore", "setting-privacy", "setting-withdraw", "setting-recovery").forEach {
+        listOf("setting-data-transfer", "setting-privacy", "setting-withdraw").forEach {
             compose.onNodeWithTag(it).assertExists()
         }
+        compose.onNodeWithTag("setting-recovery").assertDoesNotExist()
+        compose.onNodeWithText("Pause, reset or uninstall").assertDoesNotExist()
+        listOf("setting-export", "setting-backup", "setting-restore").forEach {
+            compose.onNodeWithTag(it).assertDoesNotExist()
+        }
         compose.onRoot().savePreview("privacy-settings-blocks")
+        compose.onNodeWithText("Backup and Restore").performScrollTo().performClick()
+        compose.onAllNodes(isDialog()).assertCountEquals(1)
+        listOf("setting-export", "setting-backup", "setting-restore").forEach {
+            compose.onNodeWithTag(it).performScrollTo().assertIsDisplayed()
+        }
+        compose.onRoot().savePreview("backup-and-restore-popup")
         compose.onNodeWithText("Export history (CSV)").performScrollTo().performClick()
         compose.onNodeWithText("Export local history?").assertIsDisplayed()
+        compose.onAllNodes(isDialog()).assertCountEquals(1)
         compose.onNodeWithText("Cancel").performClick()
-        compose.onNodeWithText("Privacy policy & your data").performScrollTo().performClick()
-        compose.onNodeWithText("Privacy policy").assertIsDisplayed()
+        compose.onNodeWithTag("setting-export").assertIsDisplayed()
+        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithText("Privacy and Data Policy").performScrollTo().performClick()
+        compose.onNode(hasText("Privacy and Data Policy") and hasAnyAncestor(isDialog())).assertIsDisplayed()
         compose.onNodeWithText("Close").performClick()
         compose.onNodeWithText("Withdraw accessibility consent").performScrollTo().performClick()
         compose.onNodeWithText("Withdraw consent?").assertIsDisplayed()
@@ -115,7 +129,7 @@ class SettingsStyleTest {
             compose.onNodeWithTag(it).performScrollTo().assertIsDisplayed().assertWidthIsEqualTo(288.dp)
         }
         compose.onRoot().savePreview("configure-appearance-blocks")
-        listOf("setting-export", "setting-backup", "setting-restore", "setting-privacy", "setting-withdraw", "setting-recovery").forEach {
+        listOf("setting-data-transfer", "setting-privacy", "setting-withdraw").forEach {
             compose.onNodeWithTag(it).performScrollTo().assertIsDisplayed().assertWidthIsEqualTo(288.dp)
         }
         compose.onRoot().savePreview("configure-recovery-blocks")

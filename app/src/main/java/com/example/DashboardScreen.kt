@@ -19,6 +19,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -135,14 +137,30 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
     val prefs = context.getSharedPreferences("focus_time_prefs", Context.MODE_PRIVATE)
     var isSarcasticMode by remember { mutableStateOf(prefs.getBoolean("sarcastic_mode", false)) }
     val haptics = LocalHapticFeedback.current
+    val listState = rememberLazyListState()
+    var selectedDayOffset by rememberSaveable { mutableIntStateOf(0) }
+    val templateCount = 3
+    val carouselStartPage = templateCount * 50
+    val carouselPageCount = templateCount * 101
+    val pagerState = rememberPagerState(initialPage = carouselStartPage, pageCount = { carouselPageCount })
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }.collect { page ->
+            if (page < templateCount || page >= carouselPageCount - templateCount) {
+                pagerState.scrollToPage(carouselStartPage + page % templateCount)
+            }
+        }
+    }
+    val dayLogs = remember(stats.historyIndex, stats.referenceDate, selectedDayOffset) {
+        logsForDay(stats, selectedDayOffset).filter { SessionAction.isChoice(it.actionTaken) }
+    }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize().testTag("dashboard-feed"),
+        contentPadding = PaddingValues(16.dp),
         horizontalAlignment = Alignment.Start
     ) {
+        item(key = "header", contentType = "header") {
         Spacer(modifier = Modifier.height(16.dp))
         
         Row(
@@ -181,9 +199,11 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+        }
 
         // Onboarding Warning if service is not running
         if (!isServiceEnabled) {
+            item(key = "accessibility-warning", contentType = "warning") {
             Card(
                 colors = CardDefaults.cardColors(containerColor = GuardTextPrimary.copy(alpha = 0.03f)),
                 shape = RoundedCornerShape(16.dp),
@@ -224,19 +244,10 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                 }
             }
             Spacer(modifier = Modifier.height(20.dp))
+            }
         }
 
-        // One universal day selector (its graph sits just below the carousel) that drives the
-        // whole dashboard: the carousel cards AND the intercept log further down all read from
-        // this single selected day, so there's only one graph and no per-card duplicates.
-        var selectedDayOffset by remember { mutableStateOf(0) }
-
-        // Insights Carousel (circular: wraps from the last card back to the first; always
-        // starts on the first template each time the dashboard is shown).
-        val templateCount = 3
-        val carouselStartPage = remember { (Int.MAX_VALUE / 2).let { it - it % templateCount } }
-        val pagerState = rememberPagerState(initialPage = carouselStartPage, pageCount = { Int.MAX_VALUE })
-        
+        item(key = "insights", contentType = "insights") {
         Column(modifier = Modifier.fillMaxWidth()) {
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 // Subtle mint radial glow that lifts the active card off the pure-black background
@@ -252,7 +263,7 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                 )
                 HorizontalPager(
                     state = pagerState,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("dashboard-insights"),
                     pageSpacing = 16.dp
                 ) { page ->
                     Box(
@@ -296,13 +307,15 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
         }
 
         Spacer(modifier = Modifier.height(12.dp))
+    }
 
-        // Shared 7-day activity graph — universal day selector, placed right below the carousel.
+    item(key = "day-selector", contentType = "day-selector") {
         DaySelectorBars(stats, selectedDayOffset) { selectedDayOffset = it }
 
         Spacer(modifier = Modifier.height(16.dp))
+    }
 
-        // Live stats metrics grid
+    item(key = "metrics", contentType = "metrics") {
         Text(
             text = "Metrics",
             style = MaterialTheme.typography.titleSmall,
@@ -343,15 +356,19 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+    }
 
-        // Weekly progress summary — best day, resisted count, and screen time over the last 7 days
+    item(key = "weekly-summary", contentType = "summary") {
         WeeklySummaryCard(stats, onWeekChange = viewModel::selectWeekEnding)
         Spacer(Modifier.height(16.dp))
+    }
+    item(key = "trends", contentType = "trends") {
         com.example.ui.TrendsPanel(stats)
 
         Spacer(modifier = Modifier.height(16.dp))
+    }
 
-        // On-Device and Offline Guarantee (Cybersecurity Aesthetic)
+    item(key = "privacy-guarantee", contentType = "privacy") {
         Card(
             colors = CardDefaults.cardColors(containerColor = GuardSurface),
             shape = RoundedCornerShape(20.dp),
@@ -399,12 +416,9 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
         }
 
         Spacer(modifier = Modifier.height(32.dp))
-
-        // History Log Title — shares the universal day selector at the top of the dashboard.
-        val dayLogs = remember(stats.historyIndex, stats.referenceDate, selectedDayOffset) {
-            logsForDay(stats, selectedDayOffset).filter { SessionAction.isChoice(it.actionTaken) }
         }
 
+        item(key = "intercepts-heading", contentType = "section-heading") {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -428,8 +442,10 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
         }
 
         Spacer(modifier = Modifier.height(12.dp))
+        }
 
         if (dayLogs.isEmpty()) {
+            item(key = "empty-intercepts", contentType = "empty") {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -477,26 +493,18 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                     )
                 }
             }
+            }
         } else {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = GuardSurfaceItem),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(BorderStroke(1.dp, GuardTextPrimary.copy(alpha = 0.03f)), RoundedCornerShape(16.dp))
-            ) {
-                // Show at most 10 intercept entries at once. Extra entries scroll inside
-                // this section only — the page itself never grows.
-                val maxVisibleLogs = 10
-                val logRowHeight = 56.dp
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = logRowHeight * maxVisibleLogs)
-                        .padding(horizontal = 8.dp)
+            itemsIndexed(dayLogs, key = { _, log -> "log:${log.id}" }, contentType = { _, _ -> "intercept-row" }) { index, log ->
+                val topRadius = if (index == 0) 16.dp else 0.dp
+                val bottomRadius = if (index == dayLogs.lastIndex) 16.dp else 0.dp
+                Surface(
+                    color = GuardSurfaceItem,
+                    shape = RoundedCornerShape(topStart = topRadius, topEnd = topRadius, bottomStart = bottomRadius, bottomEnd = bottomRadius),
+                    modifier = Modifier.fillMaxWidth().testTag("intercept-log:${log.id}")
                 ) {
-                    items(dayLogs, key = { it.id }) { log ->
-                        InterceptLogRow(log = log, rowHeight = logRowHeight)
+                    Box(Modifier.padding(horizontal = 8.dp)) {
+                        InterceptLogRow(log = log, rowHeight = 56.dp)
                     }
                 }
             }

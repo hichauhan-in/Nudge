@@ -96,33 +96,59 @@ class DataTransferViewModel(application: Application) : AndroidViewModel(applica
 fun DataTransferControls() {
     val model: DataTransferViewModel = viewModel()
     val status by model.status.collectAsStateWithLifecycle()
+    var showTransfers by rememberSaveable { mutableStateOf(false) }
+    var documentPickerOpen by rememberSaveable { mutableStateOf(false) }
     var action by rememberSaveable { mutableStateOf<TransferAction?>(null) }
     var pendingUri by rememberSaveable { mutableStateOf<String?>(null) }
     var confirmCsv by remember { mutableStateOf(false) }
     val csvPicker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        documentPickerOpen = false
         if (uri != null) model.run(TransferAction.CSV, uri)
     }
     val backupPicker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        documentPickerOpen = false
         if (uri != null) { action = TransferAction.BACKUP; pendingUri = uri.toString() }
     }
     val restorePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        documentPickerOpen = false
         if (uri != null) { action = TransferAction.RESTORE; pendingUri = uri.toString() }
     }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SettingsBlock(stringResource(com.example.R.string.ui_export_csv), stringResource(com.example.R.string.ui_export_summary),
-            Icons.Default.Download, onClick = { confirmCsv = true }, enabled = !status.busy, modifier = Modifier.testTag("setting-export"))
-        SettingsBlock(stringResource(com.example.R.string.ui_backup), stringResource(com.example.R.string.ui_backup_summary),
-            Icons.Default.Lock, onClick = { backupPicker.launch("nudge-${java.time.LocalDate.now()}.nudgebak") },
-            enabled = !status.busy, modifier = Modifier.testTag("setting-backup"))
-        SettingsBlock(stringResource(com.example.R.string.ui_restore_backup), stringResource(com.example.R.string.ui_restore_summary),
-            Icons.Default.Restore, onClick = { restorePicker.launch(arrayOf("application/octet-stream", "application/*")) },
-            enabled = !status.busy, modifier = Modifier.testTag("setting-restore"))
-        status.message?.let { Text(it, color = GuardTextSecondary, style = MaterialTheme.typography.bodySmall) }
+    SettingsBlock(stringResource(com.example.R.string.ui_backup_and_restore), stringResource(com.example.R.string.ui_backup_restore_summary),
+        Icons.Default.SettingsBackupRestore, onClick = { showTransfers = true },
+        enabled = !status.busy, modifier = Modifier.testTag("setting-data-transfer"))
+    if (showTransfers && !confirmCsv && pendingUri == null && !documentPickerOpen && !status.busy) {
+        EditorDialog(
+            onDismissRequest = { showTransfers = false },
+            title = { Text(stringResource(com.example.R.string.ui_backup_and_restore), color = GuardTextPrimary) },
+            text = {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SettingsBlock(stringResource(com.example.R.string.ui_export_csv), stringResource(com.example.R.string.ui_export_summary),
+                        Icons.Default.Download, onClick = { confirmCsv = true }, modifier = Modifier.testTag("setting-export"))
+                    SettingsBlock(stringResource(com.example.R.string.ui_backup), stringResource(com.example.R.string.ui_backup_summary),
+                        Icons.Default.Lock, onClick = {
+                            documentPickerOpen = true
+                            backupPicker.launch("nudge-${java.time.LocalDate.now()}.nudgebak")
+                        }, modifier = Modifier.testTag("setting-backup"))
+                    SettingsBlock(stringResource(com.example.R.string.ui_restore_backup), stringResource(com.example.R.string.ui_restore_summary),
+                        Icons.Default.Restore, onClick = {
+                            documentPickerOpen = true
+                            restorePicker.launch(arrayOf("application/octet-stream", "application/*"))
+                        }, modifier = Modifier.testTag("setting-restore"))
+                    status.message?.let { Text(it, color = GuardTextSecondary, style = MaterialTheme.typography.bodySmall) }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showTransfers = false }) { Text(stringResource(com.example.R.string.ui_close)) } }
+        )
     }
     if (confirmCsv) {
         AlertDialog(onDismissRequest = { confirmCsv = false }, title = { Text("Export local history?") },
             text = { Text("The unencrypted CSV contains monitored app names, usage times, and decisions. Anyone with the file can read it. The storage provider you choose may upload it under its own policy.") },
-            confirmButton = { TextButton(onClick = { confirmCsv = false; csvPicker.launch("nudge-history-${java.time.LocalDate.now()}.csv") }) { Text("Choose destination") } },
+            confirmButton = { TextButton(onClick = {
+                confirmCsv = false
+                documentPickerOpen = true
+                csvPicker.launch("nudge-history-${java.time.LocalDate.now()}.csv")
+            }) { Text("Choose destination") } },
             dismissButton = { TextButton(onClick = { confirmCsv = false }) { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_cancel)) } })
     }
     if (pendingUri != null && action != null) {
