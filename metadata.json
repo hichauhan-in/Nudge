@@ -2,5 +2,5 @@
   "name": "Nudge!",
   "description": "Sometimes all we need is a Nudge! A lightweight on-device mindfully disruptive solution for reducing app addiction.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
