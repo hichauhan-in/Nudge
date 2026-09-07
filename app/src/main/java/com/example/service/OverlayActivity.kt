@@ -414,8 +414,8 @@ internal fun SupportMenu(expanded: Boolean, onToggle: () -> Unit, onDismiss: () 
                 }
             }
             Spacer(modifier = Modifier.width(8.dp))
-            SupportIconButton("Optional support", "support-toggle", onClick = onToggle) {
-                Icon(Icons.Default.Coffee, "Optional support", tint = GuardMintAccent,
+            SupportIconButton("Optional Support", "support-toggle", onClick = onToggle) {
+                Icon(Icons.Default.Coffee, "Optional Support", tint = GuardMintAccent,
                     modifier = Modifier.size(24.dp).testTag("support-toggle-icon"))
             }
         }
@@ -579,7 +579,7 @@ fun DurationSelectionScreen(
             containerColor = com.example.ui.theme.GuardSurface,
             titleContentColor = GuardTextPrimary,
             textContentColor = com.example.ui.theme.GuardTextSecondary,
-            title = { androidx.compose.material3.Text("Are you sure?") },
+            title = { androidx.compose.material3.Text("Are You Sure?") },
             text = {
                 val phrase = remember { SARCASTIC_BYPASS.random() }
                 androidx.compose.material3.Text(phrase)
@@ -589,12 +589,12 @@ fun DurationSelectionScreen(
                     showBypassAlert = false
                     onBypass()
                 }) {
-                    androidx.compose.material3.Text("Ignore limit", color = androidx.compose.ui.graphics.Color(0xFFEF5350))
+                    androidx.compose.material3.Text("Ignore Limit", color = androidx.compose.ui.graphics.Color(0xFFEF5350))
                 }
             },
             dismissButton = {
                 androidx.compose.material3.TextButton(onClick = { showBypassAlert = false }) {
-                    androidx.compose.material3.Text("Keep limit", color = com.example.ui.theme.GuardMintAccent)
+                    androidx.compose.material3.Text("Keep Limit", color = com.example.ui.theme.GuardMintAccent)
                 }
             }
         )
@@ -773,14 +773,14 @@ fun ExpirySheet(
             containerColor = GuardSurface,
             titleContentColor = GuardTextPrimary,
             textContentColor = GuardTextSecondary,
-            title = { Text("Ignore this limit?") },
+            title = { Text("Ignore This Limit?") },
             text = { Text(remark) },
             confirmButton = {
                 TextButton(onClick = { showBypassAlert = false; onNoTimer() }) {
-                    Text("Ignore limit", color = Color(0xFFEF5350))
+                    Text("Ignore Limit", color = Color(0xFFEF5350))
                 }
             },
-            dismissButton = { TextButton(onClick = { showBypassAlert = false }) { Text("Keep limit", color = GuardMintAccent) } }
+            dismissButton = { TextButton(onClick = { showBypassAlert = false }) { Text("Keep Limit", color = GuardMintAccent) } }
         )
     }
 
@@ -928,7 +928,7 @@ fun ExpirySheet(
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
         ) {
-            Text(if (isSarcasticMode) "End the sequel" else androidx.compose.ui.res.stringResource(com.example.R.string.ui_close_app), fontWeight = FontWeight.Bold)
+            Text(if (isSarcasticMode) "End The Sequel" else androidx.compose.ui.res.stringResource(com.example.R.string.ui_close_app), fontWeight = FontWeight.Bold)
         }
 
         Spacer(modifier = Modifier.height(12.dp))

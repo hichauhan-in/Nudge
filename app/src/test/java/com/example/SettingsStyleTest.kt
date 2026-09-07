@@ -48,7 +48,7 @@ class SettingsStyleTest {
         compose.onNodeWithTag("setting-language").assertIsDisplayed()
         compose.onNodeWithText("Theme").performClick()
         compose.onNode(isDialog()).assertExists()
-        compose.onNodeWithText("Nudge light").performClick()
+        compose.onNodeWithText("Nudge Light").performClick()
         assertEquals("light", context.getSharedPreferences("focus_time_prefs", Context.MODE_PRIVATE).getString("theme_mode", null))
         compose.onNode(isDialog()).assertDoesNotExist()
         compose.onRoot().savePreview("appearance-settings-blocks")
@@ -69,7 +69,7 @@ class SettingsStyleTest {
     @Test fun ruleSelectionUsesPopupAndKeepsCallbackBehavior() {
         var selected = 5
         compose.setContent {
-            MyApplicationTheme { RuleMenu("Preferred timer", selected, listOf(5 to "5 min", 10 to "10 min")) { selected = it } }
+            MyApplicationTheme { RuleMenu("Preferred Timer", selected, listOf(5 to "5 min", 10 to "10 min")) { selected = it } }
         }
         compose.onNodeWithText("5 min").performClick()
         compose.onNode(isDialog()).assertExists()
@@ -93,23 +93,23 @@ class SettingsStyleTest {
             compose.onNodeWithTag(it).assertDoesNotExist()
         }
         compose.onRoot().savePreview("privacy-settings-blocks")
-        compose.onNodeWithText("Backup and Restore").performScrollTo().performClick()
+        compose.onNodeWithText("Backup And Restore").performScrollTo().performClick()
         compose.onAllNodes(isDialog()).assertCountEquals(1)
         listOf("setting-export", "setting-backup", "setting-restore").forEach {
             compose.onNodeWithTag(it).performScrollTo().assertIsDisplayed()
         }
         compose.onRoot().savePreview("backup-and-restore-popup")
-        compose.onNodeWithText("Export history (CSV)").performScrollTo().performClick()
-        compose.onNodeWithText("Export local history?").assertIsDisplayed()
+        compose.onNodeWithText("Export History (CSV)").performScrollTo().performClick()
+        compose.onNodeWithText("Export Local History?").assertIsDisplayed()
         compose.onAllNodes(isDialog()).assertCountEquals(1)
         compose.onNodeWithText("Cancel").performClick()
         compose.onNodeWithTag("setting-export").assertIsDisplayed()
         compose.onNodeWithText("Close").performClick()
-        compose.onNodeWithText("Privacy and Data Policy").performScrollTo().performClick()
-        compose.onNode(hasText("Privacy and Data Policy") and hasAnyAncestor(isDialog())).assertIsDisplayed()
+        compose.onNodeWithText("Privacy And Data Policy").performScrollTo().performClick()
+        compose.onNode(hasText("Privacy And Data Policy") and hasAnyAncestor(isDialog())).assertIsDisplayed()
         compose.onNodeWithText("Close").performClick()
-        compose.onNodeWithText("Withdraw accessibility consent").performScrollTo().performClick()
-        compose.onNodeWithText("Withdraw consent?").assertIsDisplayed()
+        compose.onNodeWithText("Withdraw Accessibility Consent").performScrollTo().performClick()
+        compose.onNodeWithText("Withdraw Consent?").assertIsDisplayed()
         compose.onNodeWithText("Cancel").performClick()
     }
 

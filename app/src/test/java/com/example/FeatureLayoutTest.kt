@@ -49,8 +49,8 @@ class FeatureLayoutTest {
             MyApplicationTheme(darkTheme = false) { Surface(color = GuardBlack) { DashboardView(model, false, context, {}) } }
         }
         compose.onNodeWithContentDescription("Automatic monitoring").assertIsOff()
-        compose.onNodeWithText("Monitoring status").assertDoesNotExist()
-        compose.onNodeWithText("Preview prompt").assertDoesNotExist()
+        compose.onNodeWithText("Monitoring Status").assertDoesNotExist()
+        compose.onNodeWithText("Preview Prompt").assertDoesNotExist()
         compose.onRoot().savePreview("dashboard-light")
     }
 
@@ -73,9 +73,9 @@ class FeatureLayoutTest {
                 }
             }
         }
-        compose.onNodeWithText("Start timer").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Start Timer").performScrollTo().assertIsDisplayed()
         compose.onRoot().savePreview("prompt-light-large-text")
-        compose.onNodeWithText("Start timer").performClick()
+        compose.onNodeWithText("Start Timer").performClick()
         assertEquals(15, selected)
     }
 
@@ -83,9 +83,9 @@ class FeatureLayoutTest {
         compose.setContent {
             MyApplicationTheme { Surface { ExpirySheet(extensionsAllowed = false, appName = "Example", packageName = "test", onMinimize = {}, onExtend = {}, onNoTimer = {}) } }
         }
-        compose.onNodeWithText("Extend timer").assertDoesNotExist()
-        compose.onNodeWithText("Close app").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Continue without timer").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Extend Timer").assertDoesNotExist()
+        compose.onNodeWithText("Close App").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Continue Without Timer").performScrollTo().assertIsDisplayed()
         compose.onRoot().savePreview("expiry-extension-limit")
     }
 
@@ -111,7 +111,7 @@ class FeatureLayoutTest {
             compose.onNodeWithTag(it).assertWidthIsEqualTo(48.dp).assertHeightIsEqualTo(48.dp)
             compose.onNodeWithTag("$it-icon", useUnmergedTree = true).assertWidthIsEqualTo(24.dp).assertHeightIsEqualTo(24.dp)
         }
-        compose.onNodeWithText("Playto unavailable").assertDoesNotExist()
+        compose.onAllNodes(hasClickAction()).assertCountEquals(3)
         compose.onNode(isPopup()).assertDoesNotExist()
         compose.onRoot().savePreview("support-options-left")
         compose.onNodeWithTag("support-toggle").performClick()
@@ -130,7 +130,7 @@ class FeatureLayoutTest {
         compose.onNodeWithTag("setting-profiles").assertIsDisplayed()
         compose.onNodeWithTag("setting-shared-budgets").assertIsDisplayed()
         compose.onNodeWithContentDescription("Edit Work").assertDoesNotExist()
-        compose.onNodeWithText("Schedules and profiles").performClick()
+        compose.onNodeWithText("Schedules And Profiles").performClick()
         compose.onAllNodes(isDialog()).assertCountEquals(1)
         compose.onNodeWithContentDescription("Edit Work").performClick()
         compose.onAllNodes(isDialog()).assertCountEquals(1)
@@ -140,9 +140,9 @@ class FeatureLayoutTest {
         compose.onNodeWithText("Cancel").performClick()
         compose.onNodeWithContentDescription("Edit Work").assertIsDisplayed()
         compose.onNodeWithText("Close").performClick()
-        compose.onNodeWithText("Shared budgets and goals").performScrollTo().performClick()
+        compose.onNodeWithText("Shared Budgets And Goals").performScrollTo().performClick()
         compose.onAllNodes(isDialog()).assertCountEquals(1)
-        compose.onNodeWithText("Add shared budget").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Add Shared Budget").assertIsDisplayed().performClick()
         compose.onAllNodes(isDialog()).assertCountEquals(1)
         compose.onNodeWithText("Save").assertIsNotEnabled()
         compose.onRoot().savePreview("shared-budget-editor")

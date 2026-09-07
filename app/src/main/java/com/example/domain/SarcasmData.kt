@@ -41,13 +41,13 @@ val SARCASTIC_EXTENSION_L4 = listOf(
 )
 
 val SARCASTIC_START_BUTTONS = listOf(
-    "Begin the quick check", "Start the plot twist", "Let the feed audition",
-    "Start my tiny detour", "Clock my curiosity", "Start. Hold me to it."
+    "Begin The Quick Check", "Start The Plot Twist", "Let The Feed Audition",
+    "Start My Tiny Detour", "Clock My Curiosity", "Start. Hold Me To It."
 )
 
 val SARCASTIC_EXTEND_BUTTONS = listOf(
-    "Authorize the sequel", "Renegotiate reality", "Grant the encore",
-    "Move my own goalposts", "Extend the plot", "One more. Allegedly."
+    "Authorize The Sequel", "Renegotiate Reality", "Grant The Encore",
+    "Move My Own Goalposts", "Extend The Plot", "One More. Allegedly."
 )
 
 val SARCASTIC_BYPASS = listOf(

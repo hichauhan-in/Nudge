@@ -112,7 +112,7 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
             containerColor = GuardSurface,
             titleContentColor = GuardTextPrimary,
             textContentColor = GuardTextSecondary,
-            title = { Text("Are you sure?") },
+            title = { Text("Are You Sure?") },
             text = { 
                 val phrase = remember { SARCASTIC_DISABLE.random() }
                 Text(phrase) 
@@ -1278,7 +1278,7 @@ fun WeeklySummaryCard(stats: DashboardStats, modifier: Modifier = Modifier, onWe
                             },
                             enabled = rangeState.selectedEndDateMillis != null
                         ) {
-                            Text("Select week", color = GuardMintAccent, fontWeight = FontWeight.Bold)
+                            Text("Select Week", color = GuardMintAccent, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -1306,7 +1306,7 @@ fun WeeklySummaryCard(stats: DashboardStats, modifier: Modifier = Modifier, onWe
                 ) {
                     Icon(
                         imageVector = Icons.Default.DateRange,
-                        contentDescription = "Select week",
+                        contentDescription = "Select Week",
                         tint = GuardMintAccent,
                         modifier = Modifier.size(20.dp)
                     )
@@ -1329,7 +1329,7 @@ fun WeeklySummaryCard(stats: DashboardStats, modifier: Modifier = Modifier, onWe
                 }
                 if (weekEndOffset != 0) {
                     Text(
-                        text = "This week",
+                        text = "This Week",
                         color = GuardMintAccent,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,

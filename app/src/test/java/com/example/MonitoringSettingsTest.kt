@@ -45,14 +45,14 @@ class MonitoringSettingsTest {
         var requested = false
         compose.setContent { MyApplicationTheme { Surface(color = GuardBlack) { MonitoringControls(true) { requested = true } } } }
         compose.onNodeWithText("Guard System Service").performClick()
-        compose.onNodeWithText("Monitoring status").assertIsDisplayed()
-        compose.onNodeWithText("Agree and enable").assertDoesNotExist()
+        compose.onNodeWithText("Monitoring Status").assertIsDisplayed()
+        compose.onNodeWithText("Agree And Enable").assertDoesNotExist()
         compose.onNodeWithText("Decline").assertDoesNotExist()
-        compose.onNodeWithText("Review accessibility access").assertDoesNotExist()
-        compose.onNodeWithContentDescription("Android accessibility: Enabled").assertIsDisplayed()
+        compose.onNodeWithText("Review Accessibility Access").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Android Accessibility: Enabled").assertIsDisplayed()
         compose.onRoot().savePreview("guard-service-status-dialog")
-        compose.onNodeWithText("Preview prompt").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Disable guard service").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Preview Prompt").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Disable Guard Service").performScrollTo().assertIsDisplayed()
         assertFalse(requested)
         compose.onNodeWithTag("monitoring-recovery-section").performScrollTo().assertIsDisplayed()
         compose.onRoot().savePreview("guard-service-recovery-section")
@@ -61,13 +61,13 @@ class MonitoringSettingsTest {
     @Test fun disablingRequiresConfirmationAndWithdrawsConsent() {
         compose.setContent { MyApplicationTheme { MonitoringControls(true) {} } }
         compose.onNodeWithText("Guard System Service").performClick()
-        compose.onNodeWithText("Disable guard service").performScrollTo().performClick()
-        compose.onNodeWithText("Disable guard service?").assertIsDisplayed()
+        compose.onNodeWithText("Disable Guard Service").performScrollTo().performClick()
+        compose.onNodeWithText("Disable Guard Service?").assertIsDisplayed()
         assertTrue(AccessibilityConsent.isAccepted(context))
         compose.onNodeWithText("Cancel").performClick()
         assertTrue(AccessibilityConsent.isAccepted(context))
-        compose.onNodeWithText("Disable guard service").performScrollTo().performClick()
-        compose.onNodeWithText("Disable guard service").performClick()
+        compose.onNodeWithText("Disable Guard Service").performScrollTo().performClick()
+        compose.onNodeWithText("Disable Guard Service").performClick()
         assertFalse(AccessibilityConsent.isAccepted(context))
         assertFalse(SessionManager.isMasterGuardEnabled.value)
     }
@@ -79,7 +79,7 @@ class MonitoringSettingsTest {
         compose.setContent { MyApplicationTheme { MonitoringControls(false) { requested = true } } }
         compose.onNodeWithText("Enable Guard System Service").performClick()
         assertFalse(requested)
-        compose.onNodeWithText("Review accessibility access").performClick()
+        compose.onNodeWithText("Review Accessibility Access").performClick()
         assertTrue(requested)
         assertFalse(AccessibilityConsent.isAccepted(context))
         assertFalse(SessionManager.isMasterGuardEnabled.value)
@@ -89,9 +89,9 @@ class MonitoringSettingsTest {
         AppAccessibilityService.connected.value = false
         compose.setContent { MyApplicationTheme { MonitoringControls(false) {} } }
         compose.onNodeWithText("Enable Guard System Service").performClick()
-        compose.onNodeWithText("Open Android accessibility settings").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Review accessibility access").assertDoesNotExist()
-        compose.onNodeWithText("Agree and enable").assertDoesNotExist()
+        compose.onNodeWithText("Open Android Accessibility Settings").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Review Accessibility Access").assertDoesNotExist()
+        compose.onNodeWithText("Agree And Enable").assertDoesNotExist()
     }
 
     @Test fun recoveryIsAvailableWithoutConsentAndResetStillNeedsConfirmation() {
@@ -102,19 +102,19 @@ class MonitoringSettingsTest {
         listOf("monitoring-status-section", "monitoring-controls-section", "monitoring-reminders-section", "monitoring-recovery-section").forEach {
             compose.onNodeWithTag(it).assertExists()
         }
-        compose.onNodeWithText("Open Android app settings").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Clear all local app data").performScrollTo().performClick()
+        compose.onNodeWithText("Open Android App Settings").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Clear All Local App Data").performScrollTo().performClick()
         compose.onAllNodes(isDialog()).assertCountEquals(1)
-        compose.onNodeWithText("Erase all local data?").assertIsDisplayed()
+        compose.onNodeWithText("Erase All Local Data?").assertIsDisplayed()
         compose.onNodeWithText("Cancel").performClick()
-        compose.onNodeWithText("Clear all local app data").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Clear All Local App Data").performScrollTo().assertIsDisplayed()
         assertFalse(AccessibilityConsent.isAccepted(context))
     }
 
     @Test fun androidRecoveryOpensThisAppsSettingsWithoutDisablingMonitoring() {
         compose.setContent { MyApplicationTheme { MonitoringControls(true) {} } }
         compose.onNodeWithText("Guard System Service").performClick()
-        compose.onNodeWithText("Open Android app settings").performScrollTo().performClick()
+        compose.onNodeWithText("Open Android App Settings").performScrollTo().performClick()
         val intent = org.robolectric.Shadows.shadowOf(context as android.app.Application).nextStartedActivity
         assertEquals(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, intent.action)
         assertEquals("package:${context.packageName}", intent.data.toString())
@@ -125,11 +125,11 @@ class MonitoringSettingsTest {
     @Test fun pauseAndResumeStayInMonitoringWithoutAnotherConsentRequest() {
         compose.setContent { MyApplicationTheme { MonitoringControls(true) {} } }
         compose.onNodeWithText("Guard System Service").performClick()
-        compose.onNodeWithText("Pause monitoring").performScrollTo().performClick()
+        compose.onNodeWithText("Pause Monitoring").performScrollTo().performClick()
         assertFalse(SessionManager.isMasterGuardEnabled.value)
         assertTrue(AccessibilityConsent.isAccepted(context))
-        compose.onNodeWithText("Resume now").performScrollTo().performClick()
+        compose.onNodeWithText("Resume Now").performScrollTo().performClick()
         assertTrue(SessionManager.isMasterGuardEnabled.value)
-        compose.onNodeWithText("Agree and enable").assertDoesNotExist()
+        compose.onNodeWithText("Agree And Enable").assertDoesNotExist()
     }
 }

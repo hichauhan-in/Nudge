@@ -24,6 +24,7 @@ class ConsentFlowTest {
     @Test
     fun freshInstallDeclineNeverOpensSettingsOrEnablesMonitoring() {
         compose.onNodeWithText("Continue").performClick()
+        compose.onNodeWithText("View Permission Details").performClick()
         compose.onNodeWithText("Decline").performClick()
         compose.runOnIdle {
             assertFalse(AccessibilityConsent.isAccepted(compose.activity))
@@ -36,11 +37,20 @@ class ConsentFlowTest {
     @Test
     fun affirmativeButtonPrecedesAndroidPermissionRequest() {
         compose.onNodeWithText("Continue").performClick()
+        compose.onNodeWithTag("accessibility-intro").assertIsDisplayed()
+        compose.onNodeWithText("Agree And Enable").assertDoesNotExist()
+        compose.runOnIdle {
+            assertFalse(AccessibilityConsent.hasDecision(compose.activity))
+            assertFalse(AccessibilityConsent.isAccepted(compose.activity))
+            assertFalse(SessionManager.isMasterGuardEnabled.value)
+            assertNull(shadowOf(compose.activity).nextStartedActivity)
+        }
+        compose.onNodeWithText("View Permission Details").performClick()
         compose.runOnIdle {
             assertFalse(AccessibilityConsent.isAccepted(compose.activity))
             assertNull(shadowOf(compose.activity).nextStartedActivity)
         }
-        compose.onNodeWithText("Agree and enable").performClick()
+        compose.onNodeWithText("Agree And Enable").performClick()
         compose.runOnIdle {
             assertTrue(AccessibilityConsent.isAccepted(compose.activity))
             assertEquals(Settings.ACTION_ACCESSIBILITY_SETTINGS, shadowOf(compose.activity).nextStartedActivity?.action)
@@ -50,9 +60,10 @@ class ConsentFlowTest {
     @Test
     fun leavingForHomeAndReturningDoesNotGrantConsent() {
         compose.onNodeWithText("Continue").performClick()
+        compose.onNodeWithText("View Permission Details").performClick()
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
-        compose.onNodeWithText("Agree and enable").assertIsDisplayed()
+        compose.onNodeWithText("Agree And Enable").assertIsDisplayed()
         compose.onNodeWithText("Decline").assertIsDisplayed()
         compose.runOnIdle {
             assertFalse(AccessibilityConsent.isAccepted(compose.activity))
@@ -64,7 +75,8 @@ class ConsentFlowTest {
     @Test
     fun configuredUserOpensMonitoringSettingsWithoutRepeatingConsent() {
         compose.onNodeWithText("Continue").performClick()
-        compose.onNodeWithText("Agree and enable").performClick()
+        compose.onNodeWithText("View Permission Details").performClick()
+        compose.onNodeWithText("Agree And Enable").performClick()
         compose.runOnIdle {
             assertEquals(Settings.ACTION_ACCESSIBILITY_SETTINGS, shadowOf(compose.activity).nextStartedActivity?.action)
             Settings.Secure.putString(compose.activity.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
@@ -75,25 +87,65 @@ class ConsentFlowTest {
             compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
             compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
             compose.onNodeWithText("Skip / Proceed").performClick()
-            compose.onNodeWithText("Monitoring status").assertDoesNotExist()
+            compose.onNodeWithText("Monitoring Status").assertDoesNotExist()
             compose.onNodeWithText("Configure").performClick()
             compose.onNodeWithText("Guard System Service").performClick()
-            compose.onNodeWithText("Monitoring status").assertIsDisplayed()
-            compose.onNodeWithText("Agree and enable").assertDoesNotExist()
+            compose.onNodeWithText("Monitoring Status").assertIsDisplayed()
+            compose.onNodeWithText("Agree And Enable").assertDoesNotExist()
             compose.onNodeWithText("Decline").assertDoesNotExist()
             compose.runOnIdle { assertNull(shadowOf(compose.activity).nextStartedActivity) }
-            compose.onNodeWithText("Disable guard service").performScrollTo().performClick()
-            compose.onNodeWithText("Disable guard service").performClick()
+            compose.onNodeWithText("Disable Guard Service").performScrollTo().performClick()
+            compose.onNodeWithText("Disable Guard Service").performClick()
             compose.runOnIdle {
                 assertFalse(AccessibilityConsent.isAccepted(compose.activity))
                 assertFalse(SessionManager.isMasterGuardEnabled.value)
             }
             compose.onNodeWithText("Enable Guard System Service").performClick()
-            compose.onNodeWithText("Review accessibility access").performClick()
-            compose.onNodeWithText("Agree and enable").assertIsDisplayed()
+            compose.onNodeWithText("Review Accessibility Access").performClick()
+            compose.onNodeWithText("View Permission Details").performClick()
+            compose.onNodeWithText("Agree And Enable").assertIsDisplayed()
             compose.onNodeWithText("Decline").assertIsDisplayed()
         } finally {
             com.example.service.AppAccessibilityService.connected.value = false
+        }
+    }
+
+    @Test
+    fun introductorySplashCanBeSkippedWithoutEnablingAccess() {
+        compose.onNodeWithText("Continue").performClick()
+        compose.onNodeWithText("Not Now").performClick()
+        compose.onNodeWithText("Skip / Proceed").assertIsDisplayed()
+        compose.runOnIdle {
+            assertFalse(AccessibilityConsent.isAccepted(compose.activity))
+            assertFalse(SessionManager.isMasterGuardEnabled.value)
+            assertNull(shadowOf(compose.activity).nextStartedActivity)
+        }
+    }
+
+    @Test
+    fun leavingAndRecreatingTheIntroDoesNotAdvanceOrAuthorizeAccess() {
+        compose.onNodeWithText("Continue").performClick()
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag("accessibility-intro").assertIsDisplayed()
+        compose.onNodeWithText("View Permission Details").assertIsDisplayed()
+        compose.onNodeWithText("Not Now").assertIsDisplayed()
+        compose.runOnIdle {
+            assertFalse(AccessibilityConsent.isAccepted(compose.activity))
+            assertFalse(SessionManager.isMasterGuardEnabled.value)
+            assertNull(shadowOf(compose.activity).nextStartedActivity)
+        }
+    }
+
+    @Test
+    fun backFromIntroDoesNotRequestPermission() {
+        compose.onNodeWithText("Continue").performClick()
+        compose.runOnIdle { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.onNodeWithText("Skip / Proceed").assertIsDisplayed()
+        compose.runOnIdle {
+            assertFalse(AccessibilityConsent.isAccepted(compose.activity))
+            assertNull(shadowOf(compose.activity).nextStartedActivity)
         }
     }
 }

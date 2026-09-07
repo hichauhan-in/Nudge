@@ -25,7 +25,7 @@ class AccessibilityDisclosureUiTest {
         compose.setContent {
             MyApplicationTheme { AccessibilityDisclosure(onAgree = { agreed++ }, onDecline = { declined++ }) }
         }
-        compose.onNodeWithText("Agree and enable").assertIsDisplayed()
+        compose.onNodeWithText("Agree And Enable").assertIsDisplayed()
         compose.onNodeWithText("Decline").assertIsDisplayed()
         compose.waitForIdle()
         assertEquals(0, agreed)
@@ -41,7 +41,7 @@ class AccessibilityDisclosureUiTest {
         compose.setContent {
             MyApplicationTheme { AccessibilityDisclosure(onAgree = { agreed = true }, onDecline = {}) }
         }
-        compose.onNodeWithText("Agree and enable").performClick()
+        compose.onNodeWithText("Agree And Enable").performClick()
         assertTrue(agreed)
     }
 
@@ -69,7 +69,7 @@ class AccessibilityDisclosureUiTest {
                 MyApplicationTheme { AccessibilityDisclosure(onAgree = {}, onDecline = {}) }
             }
         }
-        compose.onNodeWithText("Agree and enable").assertIsDisplayed()
+        compose.onNodeWithText("Agree And Enable").assertIsDisplayed()
         compose.onNodeWithText("Decline").assertIsDisplayed()
         compose.onRoot().savePreview("accessibility-disclosure-large-text")
     }
@@ -83,7 +83,7 @@ class AccessibilityDisclosureUiTest {
         }
         compose.mainClock.advanceTimeBy(60_000L)
         compose.onAllNodes(hasScrollAction()).onFirst().performTouchInput { swipeUp() }
-        compose.onNodeWithText("Agree and enable").assertIsDisplayed()
+        compose.onNodeWithText("Agree And Enable").assertIsDisplayed()
         compose.onNodeWithText("Decline").assertIsDisplayed()
         assertEquals(0, agreed)
         assertEquals(0, declined)
@@ -100,7 +100,7 @@ class AccessibilityDisclosureUiTest {
                 MyApplicationTheme { AccessibilityDisclosure(onAgree = {}, onDecline = {}) }
             }
         }
-        compose.onNodeWithText("Agree and enable").assertIsDisplayed()
+        compose.onNodeWithText("Agree And Enable").assertIsDisplayed()
         compose.onNodeWithText("Decline").assertIsDisplayed()
         compose.onRoot().savePreview("accessibility-disclosure-compact-large-text")
     }

@@ -57,13 +57,13 @@ fun PrivacyControls() {
         AlertDialog(
             onDismissRequest = { showWithdraw = false },
             containerColor = GuardSurface,
-            title = { Text("Withdraw consent?") },
+            title = { Text("Withdraw Consent?") },
             text = { Text("Monitoring and active timers will stop. Existing local history stays until you delete it. You can enable monitoring again only after reviewing the disclosure and agreeing.") },
             confirmButton = {
                 TextButton(onClick = {
                     SessionManager.withdrawConsent()
                     showWithdraw = false
-                }) { Text("Withdraw consent") }
+                }) { Text("Withdraw Consent") }
             },
             dismissButton = { TextButton(onClick = { showWithdraw = false }) { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_cancel)) } }
         )

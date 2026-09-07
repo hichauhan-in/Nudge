@@ -129,4 +129,9 @@
     <string name="ui_erase_data_question">पूरा स्थानीय डेटा मिटाएँ?</string>
     <string name="ui_erase_data_detail">इससे इतिहास, चुने हुए ऐप, टाइमर, सेटिंग और सहमति हमेशा के लिए मिट जाएँगे। Nudge! बंद होगा और अगली बार नई शुरुआत करेगा। इसे वापस नहीं किया जा सकता।</string>
     <string name="ui_erase_data">पूरा डेटा मिटाएँ</string>
+    <string name="accessibility_intro_title">सुलभता की अनुमति</string>
+    <string name="accessibility_intro_message">Nudge! सुलभता की अनुमति माँगेगा। अगला पृष्ठ इस अनुमति और आपके डेटा के उपयोग का विवरण देगा। उसके बाद आप तय कर सकते हैं कि इसे सक्षम करना है या नहीं।</string>
+    <string name="accessibility_intro_no_consent">आगे बढ़ने से अनुमति नहीं मिलती और निगरानी शुरू नहीं होती।</string>
+    <string name="accessibility_intro_continue">अनुमति का विवरण देखें</string>
+    <string name="accessibility_intro_not_now">अभी नहीं</string>
 </resources>

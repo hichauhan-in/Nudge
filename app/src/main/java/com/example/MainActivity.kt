@@ -150,6 +150,7 @@ enum class NavigationScreen {
 
 enum class InitialScreenState {
     Welcome,
+    PermissionIntro,
     Permission,
     Onboarding,
     HomeApp
@@ -180,9 +181,21 @@ fun MainScreen() {
     var consentDecisionMade by remember { mutableStateOf(AccessibilityConsent.hasDecision(context)) }
     var hasConsent by remember { mutableStateOf(AccessibilityConsent.isAccepted(context)) }
     var disclosureRequested by remember { mutableStateOf(false) }
+    var disclosureIntroSeen by rememberSaveable { mutableStateOf(false) }
     val requestAccessibility = {
         if (AccessibilityConsent.isAccepted(context)) openAccessibilitySettings(context)
-        else disclosureRequested = true
+        else {
+            disclosureIntroSeen = false
+            disclosureRequested = true
+        }
+    }
+    val declineAccessibility = {
+        AccessibilityConsent.decline(context)
+        SessionManager.setMasterGuardEnabled(false)
+        hasConsent = false
+        consentDecisionMade = true
+        disclosureRequested = false
+        disclosureIntroSeen = false
     }
 
     DisposableEffect(prefs) {
@@ -209,7 +222,8 @@ fun MainScreen() {
 
     val currentInitialState = when {
         !welcomeDone && !firstLaunchDone -> InitialScreenState.Welcome
-        disclosureRequested || !consentDecisionMade -> InitialScreenState.Permission
+        disclosureRequested || !consentDecisionMade ->
+            if (disclosureIntroSeen) InitialScreenState.Permission else InitialScreenState.PermissionIntro
         firstLaunchDone -> InitialScreenState.HomeApp
         else -> InitialScreenState.Onboarding
     }
@@ -228,6 +242,12 @@ fun MainScreen() {
                     welcomeDone = true
                 }
             }
+            InitialScreenState.PermissionIntro -> {
+                com.example.ui.AccessibilityIntroScreen(
+                    onContinue = { disclosureIntroSeen = true },
+                    onNotNow = declineAccessibility
+                )
+            }
             InitialScreenState.Permission -> {
                 AccessibilityDisclosure(
                     onAgree = {
@@ -235,19 +255,14 @@ fun MainScreen() {
                             hasConsent = true
                             consentDecisionMade = true
                             disclosureRequested = false
+                            disclosureIntroSeen = false
                             SessionManager.setMasterGuardEnabled(true)
                             openAccessibilitySettings(context)
                         } else {
                             android.widget.Toast.makeText(context, "Could not save consent. Please try again.", android.widget.Toast.LENGTH_LONG).show()
                         }
                     },
-                    onDecline = {
-                        AccessibilityConsent.decline(context)
-                        SessionManager.setMasterGuardEnabled(false)
-                        hasConsent = false
-                        consentDecisionMade = true
-                        disclosureRequested = false
-                    }
+                    onDecline = declineAccessibility
                 )
             }
             InitialScreenState.Onboarding -> {
@@ -403,7 +418,7 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
             containerColor = GuardSurface,
             titleContentColor = GuardTextPrimary,
             textContentColor = GuardTextSecondary,
-            title = { Text("Are you sure?") },
+            title = { Text("Are You Sure?") },
             text = {
                 val phrase = remember { SARCASTIC_DISABLE.random() }
                 Text(phrase)
@@ -867,11 +882,11 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
         AlertDialog(
             onDismissRequest = { showClearHistory = false },
             containerColor = GuardSurface,
-            title = { Text("Clear local history?") },
+            title = { Text("Clear Local History?") },
             text = { Text("All recorded usage and decisions will be deleted. Monitoring and active timers will pause. Your monitored apps and preferences stay. This cannot be undone.") },
             confirmButton = {
                 TextButton(onClick = { showClearHistory = false; viewModel.clearAllLogs() }) {
-                    Text("Clear history", color = MaterialTheme.colorScheme.error)
+                    Text("Clear History", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = { TextButton(onClick = { showClearHistory = false }) { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_cancel)) } }
@@ -999,7 +1014,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
 
             val timerMode by SessionManager.timerMode.collectAsStateWithLifecycle()
             var timerBehaviorExpanded by remember { mutableStateOf(false) }
-            val currentModeLabel = if (timerMode == SessionManager.TIMER_MODE_CLEAR_ON_LOCK) "Clear on lock" else "Persistent"
+            val currentModeLabel = if (timerMode == SessionManager.TIMER_MODE_CLEAR_ON_LOCK) "Clear On Lock" else "Persistent"
 
             Card(
                 colors = CardDefaults.cardColors(containerColor = GuardSurface),
@@ -1053,7 +1068,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                         Column {
                             TimerModeOption(
                                 selected = timerMode == SessionManager.TIMER_MODE_CLEAR_ON_LOCK,
-                                title = "Clear on lock",
+                                title = "Clear On Lock",
                                 description = "All timers reset when the phone is locked",
                                 onClick = { SessionManager.setTimerMode(SessionManager.TIMER_MODE_CLEAR_ON_LOCK) }
                             )
@@ -1327,7 +1342,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Favorite,
-                                contentDescription = "Optional support",
+                                contentDescription = "Optional Support",
                                 tint = GuardMintAccent,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -1335,7 +1350,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Buy Me a Coffee",
+                                text = "Buy Me A Coffee",
                                 fontWeight = FontWeight.Bold,
                                 color = GuardTextPrimary
                             )
@@ -1395,7 +1410,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "About the Developer",
+                                text = "About The Developer",
                                 fontWeight = FontWeight.Bold,
                                 color = GuardTextPrimary,
                                 fontFamily = FontFamily.Monospace
@@ -2009,7 +2024,7 @@ fun launchKofiDonation(context: Context) {
 }
 
 @Composable
-private fun SupportOptionsDialog(onDismiss: () -> Unit, onUpi: () -> Unit, onKofi: () -> Unit) {
+internal fun SupportOptionsDialog(onDismiss: () -> Unit, onUpi: () -> Unit, onKofi: () -> Unit) {
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Card(
             colors = CardDefaults.cardColors(containerColor = GuardSurface),
@@ -2019,7 +2034,7 @@ private fun SupportOptionsDialog(onDismiss: () -> Unit, onUpi: () -> Unit, onKof
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    text = "Let's Have a Coffee",
+                    text = "Let's Have A Coffee",
                     fontWeight = FontWeight.Bold,
                     color = GuardTextPrimary,
                     fontSize = 18.sp,
@@ -2039,7 +2054,6 @@ private fun SupportOptionsDialog(onDismiss: () -> Unit, onUpi: () -> Unit, onKof
                     iconRes = R.drawable.ic_pay_upi,
                     name = "UPI",
                     subtitle = "Pay via any UPI app",
-                    enabled = true,
                     onClick = onUpi
                 )
                 Spacer(modifier = Modifier.height(10.dp))
@@ -2047,16 +2061,7 @@ private fun SupportOptionsDialog(onDismiss: () -> Unit, onUpi: () -> Unit, onKof
                     iconRes = R.drawable.ic_pay_kofi,
                     name = "Ko-Fi",
                     subtitle = "Share some Ko-Fi",
-                    enabled = true,
                     onClick = onKofi
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                PaymentMethodRow(
-                    iconRes = R.drawable.ic_pay_playto,
-                    name = "Playto",
-                    subtitle = "Coming soon",
-                    enabled = false,
-                    onClick = {}
                 )
             }
         }
@@ -2068,17 +2073,16 @@ private fun PaymentMethodRow(
     iconRes: Int,
     name: String,
     subtitle: String,
-    enabled: Boolean,
     onClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .clickable(enabled = enabled) { onClick() }
-            .background(if (enabled) GuardSurfaceItem else GuardTextPrimary.copy(alpha = 0.02f))
+            .clickable(onClick = onClick)
+            .background(GuardSurfaceItem)
             .border(
-                BorderStroke(1.dp, if (enabled) GuardMintAccent.copy(alpha = 0.3f) else GuardTextPrimary.copy(alpha = 0.05f)),
+                BorderStroke(1.dp, GuardMintAccent.copy(alpha = 0.3f)),
                 RoundedCornerShape(14.dp)
             )
             .padding(14.dp),
@@ -2097,7 +2101,6 @@ private fun PaymentMethodRow(
                 tint = Color.Unspecified,
                 modifier = Modifier
                     .size(22.dp)
-                    .alpha(if (enabled) 1f else 0.45f)
             )
         }
         Spacer(modifier = Modifier.width(14.dp))
@@ -2105,7 +2108,7 @@ private fun PaymentMethodRow(
             Text(
                 text = name,
                 fontWeight = FontWeight.Bold,
-                color = if (enabled) GuardTextPrimary else GuardTextSecondary,
+                color = GuardTextPrimary,
                 fontSize = 15.sp
             )
             Text(
@@ -2114,23 +2117,12 @@ private fun PaymentMethodRow(
                 color = GuardTextSecondary
             )
         }
-        if (enabled) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                contentDescription = null,
-                tint = GuardMintAccent,
-                modifier = Modifier.size(18.dp)
-            )
-        } else {
-            Text(
-                text = "SOON",
-                color = GuardTextSecondary,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                letterSpacing = 1.sp
-            )
-        }
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+            contentDescription = null,
+            tint = GuardMintAccent,
+            modifier = Modifier.size(18.dp)
+        )
     }
 }
 

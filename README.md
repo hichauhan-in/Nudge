@@ -30,7 +30,8 @@ No accounts. No cloud. No ads. Everything happens on your device.
 
 ## Version 6.0.0
 
-- Accessibility disclosure version 2 uses **Agree and enable** and **Decline**. Previous disclosure acceptance is not reused. Back, Home, scrolling, and inactivity never grant consent. The obsolete one-button permission screen has been removed.
+- Setup now includes a matching **Accessibility Permission** introduction between Welcome and the detailed disclosure. **View Permission Details** only opens the explanation; it does not grant consent or request Android access. **Not Now** and Back continue without monitoring. The detailed disclosure still uses the explicit **Agree And Enable** and **Decline** choices. Previous disclosure acceptance is not reused when its version is outdated, and navigation or inactivity never grants consent.
+- English action and setting titles use Title Case, including **Withdraw Accessibility Consent**, **Schedules And Profiles**, and **Shared Budgets And Goals**. Explanations remain sentence case. Support offers only UPI and Ko-fi.
 - Monitoring status is in **Configure > Guard System Service**, not on Home. It distinguishes Android permission from the service connection and includes notifications, prompt preview, pause, resume, and confirmed disable. Users with valid consent manage their existing access without seeing Agree/Decline again; first-time access and re-enabling after withdrawal still require the disclosure. Timed pauses (15/30/60 minutes) and an optional Quick Settings tile are available. Android may defer the inexact resume alarm; the next foreground event also checks its deadline. Revoking consent or manually pausing cancels automatic resume.
 - Configure includes reusable Work, Evening, and Bedtime profiles, editable weekdays and time windows, shared app budgets, and a weekly tracked-time goal. Assign a profile per app in Monitor; outside its schedule, that app is not guarded or charged. Overnight windows belong to their starting weekday. Shared budgets add the recorded usage of their members; the tighter individual/shared limit applies.
 - Per-app settings include a preferred/remembered duration, prompt tone, maximum extensions, and optional cooldown after the final extension. These remain voluntary rules: pause, settings, and uninstall remain available.
@@ -69,7 +70,7 @@ Open a guarded app  ─►  Mindful Prompt: "Commit to a healthy limit"
   Timer runs quietly  ──►  Time's up  ──►  Extend?  or  Close the app
 ```
 
-1. **Review accessibility access** — read the dedicated in-app disclosure. Choose **Agree and enable** to open Android settings, or **Decline** to continue without automatic monitoring. Android approval is a separate step.
+1. **Review accessibility access** — after the permission introduction, tap **View Permission Details** to read the dedicated disclosure. Choose **Agree And Enable** to open Android settings, or **Decline** to continue without automatic monitoring. Android approval is a separate step.
 2. **Choose your apps** — add launchable apps to the Monitor Console. Android Settings, package installers, home launchers, and Nudge itself are excluded so device controls remain accessible.
 3. **Get nudged** — opening a guarded app prompts for a timer or a deliberate choice to close or continue without one.
 4. **Stay aware** — independent countdowns continue while you switch apps. Android can show a grouped notification with a reset action for each timer.
@@ -93,7 +94,7 @@ Open a guarded app  ─►  Mindful Prompt: "Commit to a healthy limit"
 - 📅 **Selectable weekly summary** — tap the calendar icon and choose the last day of a seven-day period. The calendar highlights the whole period; future dates are disabled and older history stays available.
 - 🧿 **Quota rings & polished prompts** — the intervention and Monitor screens show a thin circular used‑vs‑quota ring, backed by subtle motion, light haptics, and a soft scale‑in entrance.
 - 🧩 **Home‑screen widget** — a compact, on‑brand widget (rounded, mint‑accented, monospace) showing your mindful stats at a glance.
-- ☕ **Buy me a coffee** — optional UPI and Ko-fi support in Configure and the prompt/expiry screens. Tips unlock nothing and payment takes place in another app or browser. Playto remains unavailable.
+- ☕ **Buy me a coffee** — optional UPI and Ko-fi support in Configure and the prompt/expiry screens. Tips unlock nothing and payment takes place in another app or browser.
 - 🔕 **Runs on device** — event-driven foreground detection and a foreground service while timers run. Android or the device manufacturer may still delay or stop background work.
 
 ---
@@ -156,7 +157,7 @@ Nudge is built to be trustworthy by design:
 ## Pause, revoke, reset, uninstall
 
 1. **Pause:** use the Home monitoring switch or **Configure → Guard System Service → Monitoring status → Monitoring**. Active timers stop; recorded history remains.
-2. **Withdraw consent:** choose **Withdraw accessibility consent** in Configure. Monitoring stops, and the service disables itself. Re-enabling requires another affirmative choice in the disclosure and Android approval.
+2. **Withdraw consent:** choose **Withdraw Accessibility Consent** in Configure. Monitoring stops, and the service disables itself. Re-enabling requires another affirmative choice in the disclosure and Android approval.
 3. **Clear history:** **Configure → Clear Local History → Clear**, then confirm. This pauses monitoring and deletes recorded usage/decisions while keeping monitored-app settings and today's quota counters.
 4. **Start fresh:** **Configure → Guard System Service → Monitoring status → Recovery → Clear all local app data**, then confirm. Android clears app storage and closes Nudge. All local data and consent are removed. Recovery remains available when monitoring or consent is off.
 5. **Android recovery:** Settings → Accessibility → Installed apps → Nudge → Off. Then Settings → Apps → Nudge → Force stop, Storage → Clear storage, or Uninstall. Labels vary by manufacturer. No PIN, administrator removal, special uninstall, or factory reset is needed.
@@ -189,14 +190,14 @@ cd nudge
 1. Open the project in **Android Studio** and let it sync Gradle.
 2. No API keys or secrets file are required. Debug builds use Android's standard debug keystore.
 3. Run on an emulator or a physical device.
-4. On first launch, review the dedicated Accessibility disclosure. Test both **Decline** and **Agree and enable** before turning the service on in Android settings.
+4. On first launch, test the permission introduction, then the detailed Accessibility disclosure. **View Permission Details** must not open Android settings or grant consent. Test both **Decline** and **Agree And Enable** on the detailed page before turning the service on in Android settings.
 
 ```powershell
 .\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 .\gradlew.bat :app:assembleRelease :app:lintRelease
 ```
 
-Release builds enable R8 and resource shrinking. Without an upload keystore, the release APK and bundle are unsigned build-validation artifacts. For a Play upload, configure `KEYSTORE_PATH`, `STORE_PASSWORD`, and `KEY_PASSWORD` in your publishing environment (alias `upload`), then run `:app:bundleRelease`; do not commit or share those secrets. Version code is 7 and version name is 6.0.0; use a larger unused code if Play Console already has 7 or higher. Both supported language resources are packaged so manual language switching works offline.
+Release builds enable R8 and resource shrinking. Without an upload keystore, the release APK and bundle are unsigned build-validation artifacts. For a Play upload, configure `KEYSTORE_PATH`, `STORE_PASSWORD`, and `KEY_PASSWORD` in your publishing environment (alias `upload`), then run `:app:bundleRelease`; do not commit or share those secrets. The current build configuration uses version code 9 and version name 9.0.0; use a larger unused code if Play Console already has 9 or higher. Both supported language resources are packaged so manual language switching works offline.
 
 On Windows, Kotlin/KSP can misinterpret `!` in a project path as a JAR separator. Build from a path such as `C:\Projects\nudge` without `!`, or run [scripts/verify.ps1](scripts/verify.ps1). The script accepts `-JavaHome` and `-SdkPath` (or their standard environment variables), runs all tests, debug/release APK and bundle builds, and lint. If the source path contains `!`, it uses a disposable source copy excluding signing material and collects results under `build/verification`. Native UI previews are generated with Roborazzi; standalone test runs can enable them with `-Proborazzi.test.record=true`.
 
@@ -217,7 +218,7 @@ Tests cover history beyond 100 records, non-destructive migrations, duplicate ev
 
 ## Google Play resubmission
 
-The app implements a dedicated disclosure with **Agree and enable** and **Decline**, no automatic dismissal, and no consent from Back/Home/navigation. Refusal leaves automatic monitoring off and allows access to the rest of the app. The disclosure explains background access, local storage, use, and optional user-initiated sharing before requesting Android approval.
+The app implements a dedicated disclosure with **Agree And Enable** and **Decline**, no automatic dismissal, and no consent from Back/Home/navigation. The preceding permission introduction is informational only; it does not replace the disclosure. Refusal leaves automatic monitoring off and allows access to the rest of the app. The disclosure explains background access, local storage, use, and optional user-initiated sharing before requesting Android approval.
 
 App code alone cannot guarantee Play approval. Before resubmitting:
 

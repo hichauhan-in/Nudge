@@ -13,8 +13,8 @@ android {
     applicationId = "in.hichauhan.nudge"
     minSdk = 29
     targetSdk = 36
-    versionCode = 7
-    versionName = "6.0.0"
+    versionCode = 9
+    versionName = "9.0.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

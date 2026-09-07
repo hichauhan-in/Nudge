@@ -1,15 +1,16 @@
-# Nudge 6.0.0: Play Store Resubmission
+# Nudge 9.0.0: Play Store Resubmission
 
-Prepared 7 September 2026 for application ID `in.hichauhan.nudge`, version name `6.0.0`, version code `7`.
+Prepared 7 September 2026 for application ID `in.hichauhan.nudge`, version name `9.0.0`, version code `9`.
 
 This is a release checklist, not a promise of Google approval. The previously rejected artifact, current Play Console declarations, public policy URL, signing credentials, and AI Studio's final generated artifact are not accessible from this workspace.
 
 ## Accessibility Rejection Fix
 
 - The normal first-use flow shows a separate AccessibilityService disclosure before Android settings or event processing.
+- A matching permission introduction precedes that disclosure. **View Permission Details** only navigates to the detailed page and does not save consent or open Android settings. **Not Now** and Back continue without automatic monitoring. Show both pages in the reviewer video.
 - The disclosure names foreground package/window access, background operation, local storage, feature purposes, and optional user-initiated exports.
-- Two distinct buttons are present: **Agree and enable** and **Decline**. No toggle grants consent.
-- Only **Agree and enable** saves acceptance and opens Android settings. Android service approval is a separate step.
+- Two distinct buttons are present on the detailed disclosure: **Agree And Enable** and **Decline**. No toggle grants consent.
+- Only **Agree And Enable** saves acceptance and opens Android settings. Android service approval is a separate step.
 - Decline and Back leave monitoring off. Home, scrolling, elapsed time, and returning to the app do not grant acceptance.
 - Both buttons remain outside the scrolling explanation and are covered by compact/large-font tests.
 - Disclosure version 2 invalidates older acceptance. The old, unused one-button permission screen was removed.
@@ -18,7 +19,7 @@ This is a release checklist, not a promise of Google approval. The previously re
 
 ## Actions Required in Play Console
 
-1. **Upload the right artifact.** Build and upload a signed 6.0.0 AAB using the existing Play upload identity. Version code 7 must be unused; increase it if needed. A locally unsigned bundle is not an upload-ready artifact. Do not use a debug signing certificate for the update.
+1. **Upload the right artifact.** Build and upload a signed 9.0.0 AAB using the existing Play upload identity. Version code 9 must be unused; increase it if needed. A locally unsigned bundle is not an upload-ready artifact. Do not use a debug signing certificate for the update.
 2. **Update the Accessibility declaration.** Declare app functionality: deterministic, user-configured app reminders, timers, schedules, individual/shared daily budgets, and cooldowns. Do not identify Nudge as a disability-support accessibility tool, parental supervision app, or autonomous agent. Explain that package/window events are processed in the background after consent; history stays local except explicit exports.
 3. **Submit a new reviewer video.** Use the exact signed build. Show all steps listed below, not just Android's service description. An old video demonstrating a one-button screen is not sufficient.
 4. **Update the foreground-service declaration.** Retain `specialUse`: user-started mindful timers continue across app switches, with grouped countdown notifications and reset actions. Explain why delaying/interruption would miss a user-selected deadline. Show starting a timer, its notification, reset, and service stopping when no timers remain. Do not declare camera/location/media/health/data-sync types that are not used.
@@ -29,10 +30,10 @@ This is a release checklist, not a promise of Google approval. The previously re
 
 ## Reviewer Video Sequence
 
-1. Fresh install, launch Nudge, tap Continue, show the complete disclosure and both buttons. Slowly scroll through all disclosure paragraphs.
+1. Fresh install, launch Nudge, and tap Continue. Show the Accessibility Permission introduction and its two choices. Tap View Permission Details, then show the complete detailed disclosure and both consent buttons. Slowly scroll through all disclosure paragraphs. The introduction alone is not the required disclosure.
 2. Tap Decline. Show that onboarding/home remains usable and automatic monitoring is off.
-3. After declining, reopen the disclosure through Configure > Enable Guard System Service > Review accessibility access, or the Home accessibility warning. Press Back, reopen, press Home, and return: no consent is recorded. Once access is enabled, Configure > Guard System Service opens monitoring status and disable/pause controls, not another consent request.
-4. Tap Agree and enable, then separately enable Nudge in Android Accessibility settings.
+3. After declining, reopen through Configure > Enable Guard System Service > Review Accessibility Access, or the Home accessibility warning. The introduction appears first; tap View Permission Details for the disclosure. Press Back, reopen, press Home, and return: no consent is recorded. Once access is enabled, Configure > Guard System Service opens Monitoring Status and disable/pause controls, not another consent request.
+4. Tap Agree And Enable on the detailed disclosure, then separately enable Nudge in Android Accessibility settings.
 5. Select a launchable app, open it, show the prompt, start a short timer, and show the countdown notification. Demonstrate close, extend, and deliberate bypass.
 6. Show a small daily/shared budget or a configured schedule using deterministic user choices. Show that Android Settings and uninstall remain accessible.
 7. Withdraw consent in Configure > Privacy & Data and reopen the selected app: no prompt. Demonstrate that re-enabling requires the disclosure again. Configure > Guard System Service > Monitoring status also offers confirmed disable, plus Android app settings and full-data reset under Recovery.

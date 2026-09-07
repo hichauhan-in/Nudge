@@ -158,7 +158,7 @@ private fun ProfileEditor(profile: FocusProfile, onDismiss: () -> Unit, onSave: 
         }) { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_save)) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_cancel)) } })
     if (confirmDelete) {
-        AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("Delete this profile?") },
+        AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("Delete This Profile?") },
             text = { Text("Apps assigned to this profile will return to Always monitoring.") },
             confirmButton = { TextButton(onClick = { onDelete?.invoke() }) { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_delete)) } },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_cancel)) } })

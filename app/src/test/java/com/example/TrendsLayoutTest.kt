@@ -57,7 +57,7 @@ class TrendsLayoutTest {
 
     private fun verifyContents() {
         val card = compose.onNodeWithTag("trends-card").fetchSemanticsNode().boundsInRoot
-        listOf("Tracked-time trends", "60 min", "30 min", "100 min", "1 / 7", "Weekly goal: 60 / 420 min recorded").forEach { text ->
+        listOf("Tracked-Time Trends", "60 min", "30 min", "100 min", "1 / 7", "Weekly goal: 60 / 420 min recorded").forEach { text ->
             val node = compose.onNodeWithText(text).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
             assertTrue(node.left >= card.left && node.right <= card.right)
             assertTrue(node.top >= card.top && node.bottom <= card.bottom)

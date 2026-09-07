@@ -142,13 +142,13 @@ fun DataTransferControls() {
         )
     }
     if (confirmCsv) {
-        AlertDialog(onDismissRequest = { confirmCsv = false }, title = { Text("Export local history?") },
+        AlertDialog(onDismissRequest = { confirmCsv = false }, title = { Text("Export Local History?") },
             text = { Text("The unencrypted CSV contains monitored app names, usage times, and decisions. Anyone with the file can read it. The storage provider you choose may upload it under its own policy.") },
             confirmButton = { TextButton(onClick = {
                 confirmCsv = false
                 documentPickerOpen = true
                 csvPicker.launch("nudge-history-${java.time.LocalDate.now()}.csv")
-            }) { Text("Choose destination") } },
+            }) { Text("Choose Destination") } },
             dismissButton = { TextButton(onClick = { confirmCsv = false }) { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_cancel)) } })
     }
     if (pendingUri != null && action != null) {
@@ -163,7 +163,7 @@ fun DataTransferControls() {
         var confirmation by remember { mutableStateOf("") }
         val restoring = action == TransferAction.RESTORE
         EditorDialog(onDismissRequest = { pendingUri = null; action = null },
-            title = { Text(if (restoring) "Restore encrypted backup" else "Protect your backup") },
+            title = { Text(if (restoring) "Restore Encrypted Backup" else "Protect Your Backup") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(if (restoring) "This replaces local history and monitored-app selections. Monitoring turns off. Consent, active timers, and cooldowns are not restored. Today's existing quota usage will not be reduced."
@@ -180,7 +180,7 @@ fun DataTransferControls() {
             dismissButton = { TextButton(onClick = { pendingUri = null; action = null }) { Text(androidx.compose.ui.res.stringResource(com.example.R.string.ui_cancel)) } })
     }
     if (status.busy) {
-        AlertDialog(onDismissRequest = {}, title = { Text("Working with local data") },
+        AlertDialog(onDismissRequest = {}, title = { Text("Working With Local Data") },
             text = { LinearProgressIndicator(Modifier.fillMaxWidth()) }, confirmButton = {})
     }
 }
