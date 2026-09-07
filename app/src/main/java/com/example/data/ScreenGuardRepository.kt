@@ -14,6 +14,11 @@ class ScreenGuardRepository(private val dao: ScreenGuardDao) {
         dao.insertMonitoredApp(app)
     }
 
+    suspend fun toggleMonitoring(packageName: String, appName: String) = dao.toggleMonitoring(packageName, appName)
+
+    suspend fun updateDailyQuota(packageName: String, appName: String, enabled: Boolean, minutes: Int) =
+        dao.updateDailyQuota(packageName, appName, enabled, minutes)
+
     suspend fun deleteMonitoredApp(packageName: String) {
         dao.deleteMonitoredApp(packageName)
     }

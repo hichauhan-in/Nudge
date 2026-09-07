@@ -1,3 +1,11 @@
 <resources>
     <string name="app_name">Nudge!</string>
+    <string name="accessibility_disclosure_title">Accessibility access for Nudge!</string>
+    <string name="accessibility_disclosure_access">Nudge! uses the Android AccessibilityService API to detect the package name of the app in the foreground, including while Nudge! is closed or not on screen. For apps you choose to monitor, this enables reminders over the app, session timers, and daily limits. Strict Mode can block a selected app after its quota is used.</string>
+    <string name="accessibility_disclosure_storage">Nudge! stores monitored app names and package names, usage times, session choices, timers, and limits locally on this device to show your history and weekly summaries. This information is not sent to us or shared with third parties.</string>
+    <string name="accessibility_disclosure_exclusions">Nudge! does not read screen text, messages, passwords, keystrokes, or browsing content. It does not click buttons or change settings in other apps. It is a self-management tool, not a disability-support accessibility tool or a parental-control service.</string>
+    <string name="accessibility_disclosure_choice">You can decline and use the app without automatic monitoring. You can later withdraw consent in Configure or disable Nudge! in Android Accessibility settings. You can always pause monitoring, clear local data, and uninstall normally. Agreeing opens Android settings; you must separately enable Nudge! there.</string>
+    <string name="accessibility_agree">Agree and enable</string>
+    <string name="accessibility_decline">Not now</string>
+    <string name="accessibility_service_description">Shows reminders and enforces your chosen timers and daily limits for selected apps, using foreground package-change events. App names, usage times, and session choices stay on this device. Does not read screen content. Consent is required inside Nudge! before monitoring starts. Disable here at any time.</string>
 </resources>

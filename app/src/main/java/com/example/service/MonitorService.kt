@@ -35,6 +35,11 @@ class MonitorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!com.example.domain.AccessibilityConsent.isAccepted(this) || !SessionManager.isMasterGuardEnabled.value) {
+            cancelChildren()
+            stopSelf()
+            return START_NOT_STICKY
+        }
         val timers = SessionManager.activeTimers.value.values.sortedBy { it.appName.lowercase() }
         try {
             startForeground(SUMMARY_ID, buildSummary(timers))
@@ -71,8 +76,14 @@ class MonitorService : Service() {
 
     private fun cancelChildren() {
         val nm = getSystemService(NotificationManager::class.java)
-        for (id in postedChildIds.toSet()) nm.cancel(id)
+        nm.activeNotifications.filter { it.notification.group == GROUP_KEY && it.id != SUMMARY_ID }
+            .forEach { nm.cancel(it.id) }
         postedChildIds.clear()
+    }
+
+    override fun onDestroy() {
+        cancelChildren()
+        super.onDestroy()
     }
 
     private fun buildSummary(timers: List<ActiveTimer>): Notification {
@@ -167,6 +178,11 @@ class MonitorService : Service() {
 
         /** Starts or refreshes the status notification from the current set of running timers. */
         fun start(context: Context) {
+            if (!com.example.domain.AccessibilityConsent.isAccepted(context) ||
+                !SessionManager.isMasterGuardEnabled.value || SessionManager.activeTimers.value.isEmpty()) {
+                stop(context)
+                return
+            }
             try {
                 context.startForegroundService(Intent(context, MonitorService::class.java))
             } catch (e: Exception) {
@@ -181,6 +197,8 @@ class MonitorService : Service() {
         fun stop(context: Context) {
             try {
                 context.stopService(Intent(context, MonitorService::class.java))
+                val manager = context.getSystemService(NotificationManager::class.java)
+                manager.activeNotifications.filter { it.notification.group == GROUP_KEY }.forEach { manager.cancel(it.id) }
             } catch (e: Exception) {
                 // ignore
             }

@@ -44,6 +44,11 @@ import com.example.data.AppDatabase
 import com.example.data.ScreenGuardRepository
 import com.example.domain.SessionManager
 import com.example.domain.SessionState
+import com.example.domain.SARCASTIC_BYPASS
+import com.example.domain.SARCASTIC_QUOTA
+import com.example.domain.SARCASTIC_LONG_DURATION
+import com.example.domain.SARCASTIC_EXTEND_BUTTONS
+import com.example.domain.extensionRemark
 import com.example.ui.theme.GuardBlack
 import com.example.ui.theme.GuardSurface
 import com.example.ui.theme.GuardSurfaceItem
@@ -63,10 +68,13 @@ class OverlayActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        SessionManager.isDonationFlowActive = false
+        SessionManager.endDonationFlow()
+        SessionManager.setOverlayVisible(true)
+        if (!com.example.domain.AccessibilityConsent.isAccepted(this) || !SessionManager.isMasterGuardEnabled.value) safeFinish()
     }
 
     override fun onStop() {
+        SessionManager.setOverlayVisible(false)
         super.onStop()
         // Do NOT reset the prompt state here, as it allows bypass on lock screen / system minimization.
         // AppAccessibilityService handles resetting the state when the user actually navigates to another app.
@@ -79,6 +87,7 @@ class OverlayActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        SessionManager.init(this)
         val database = AppDatabase.getDatabase(this)
         repository = ScreenGuardRepository(database.dao())
 
@@ -179,7 +188,6 @@ class OverlayActivity : ComponentActivity() {
                                     appName = state.appName,
                                     packageName = state.packageName,
                                     onMinimize = {
-                                        SessionManager.resetState()
                                         triggerHomeMinimize()
                                     },
                                     onExtend = { minutes ->
@@ -199,7 +207,6 @@ class OverlayActivity : ComponentActivity() {
                                     packageName = state.packageName,
                                     strict = state.strict,
                                     onClose = {
-                                        SessionManager.resetState()
                                         triggerHomeMinimize()
                                     },
                                     onContinue = {
@@ -254,7 +261,7 @@ class OverlayActivity : ComponentActivity() {
 
                     val launchKofi = {
                         donateExpanded = false
-                        SessionManager.isDonationFlowActive = true
+                        SessionManager.beginDonationFlow()
                         val uri = android.net.Uri.parse("https://ko-fi.com/hichauhan")
                         val intent = Intent(Intent.ACTION_VIEW, uri).apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -262,14 +269,14 @@ class OverlayActivity : ComponentActivity() {
                         try {
                             contextCurrent.startActivity(intent)
                         } catch (e: Exception) {
-                            SessionManager.isDonationFlowActive = false
+                            SessionManager.endDonationFlow()
                             android.widget.Toast.makeText(contextCurrent, "No browser found", android.widget.Toast.LENGTH_SHORT).show()
                         }
                     }
 
                     val launchUpi = {
                         donateExpanded = false
-                        SessionManager.isDonationFlowActive = true
+                        SessionManager.beginDonationFlow()
                         val uri = android.net.Uri.parse("upi://pay").buildUpon()
                             .appendQueryParameter("pa", "gpay-12199931519@okbizaxis")
                             .appendQueryParameter("pn", "Nudge")
@@ -281,7 +288,7 @@ class OverlayActivity : ComponentActivity() {
                         try {
                             contextCurrent.startActivity(chooser)
                         } catch (e: Exception) {
-                            SessionManager.isDonationFlowActive = false
+                            SessionManager.endDonationFlow()
                             android.widget.Toast.makeText(contextCurrent, "No UPI app found", android.widget.Toast.LENGTH_SHORT).show()
                         }
                     }
@@ -364,6 +371,14 @@ class OverlayActivity : ComponentActivity() {
     }
 
     private fun triggerHomeMinimize() {
+        when (val state = SessionManager.sessionState.value) {
+            is SessionState.Prompting -> SessionManager.logPromptResisted(state.packageName, state.appName, repository)
+            is SessionState.Expired -> SessionManager.logPromptResisted(state.packageName, state.appName, repository)
+            is SessionState.QuotaExhausted -> SessionManager.logPromptResisted(state.packageName, state.appName, repository)
+            else -> SessionManager.resetState()
+        }
+        SessionManager.flushForegroundUsage()
+        SessionManager.lastUserAppPackage = null
         val homeIntent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_HOME)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -579,12 +594,12 @@ fun DurationSelectionScreen(
                     showBypassAlert = false
                     onBypass()
                 }) {
-                    androidx.compose.material3.Text("Continue", color = androidx.compose.ui.graphics.Color(0xFFEF5350))
+                    androidx.compose.material3.Text("Ignore limit", color = androidx.compose.ui.graphics.Color(0xFFEF5350))
                 }
             },
             dismissButton = {
                 androidx.compose.material3.TextButton(onClick = { showBypassAlert = false }) {
-                    androidx.compose.material3.Text("Rethink", color = com.example.ui.theme.GuardMintAccent)
+                    androidx.compose.material3.Text("Keep limit", color = com.example.ui.theme.GuardMintAccent)
                 }
             }
         )
@@ -612,8 +627,8 @@ fun DurationSelectionScreen(
         // One remark per 10-minute band (11-20, 21-30, ...), remembered unconditionally so the
         // composition slot table stays stable and the remark doesn't change on every minute.
         val durationBand = ((customMinutes.toInt() - 1) / 10).coerceAtLeast(0)
-        val sarcasticLongRemark = remember(durationBand) { SARCASTIC_LONG_DURATION.random() }
-        val promptText = if (isLongSarcastic) sarcasticLongRemark else "Commit to a healthy limit for $appName"
+        val sarcasticLongRemark = remember(packageName, durationBand) { SARCASTIC_LONG_DURATION.random() }
+        val promptText = if (isLongSarcastic) "$appName: $sarcasticLongRemark" else "Commit to a healthy limit for $appName"
         Text(
             text = promptText,
             style = MaterialTheme.typography.bodyMedium,
@@ -686,7 +701,7 @@ fun DurationSelectionScreen(
                     value = customMinutes,
                     onValueChange = { customMinutes = it },
                     valueRange = 1f..60f,
-                    steps = 59,
+                    steps = 58,
                     colors = SliderDefaults.colors(
                         thumbColor = GuardMintAccent,
                         activeTrackColor = GuardMintAccent,
@@ -753,6 +768,24 @@ fun ExpirySheet(
     onNoTimer: () -> Unit
 ) {
     var customMinutes by remember { mutableStateOf(5f) }
+    var showBypassAlert by remember { mutableStateOf(false) }
+    if (showBypassAlert) {
+        val remark = remember(packageName) { SARCASTIC_BYPASS.random() }
+        AlertDialog(
+            onDismissRequest = { showBypassAlert = false },
+            containerColor = GuardSurface,
+            titleContentColor = Color.White,
+            textContentColor = GuardTextSecondary,
+            title = { Text("Ignore this limit?") },
+            text = { Text(remark) },
+            confirmButton = {
+                TextButton(onClick = { showBypassAlert = false; onNoTimer() }) {
+                    Text("Ignore limit", color = Color(0xFFEF5350))
+                }
+            },
+            dismissButton = { TextButton(onClick = { showBypassAlert = false }) { Text("Keep limit", color = GuardMintAccent) } }
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -778,7 +811,7 @@ fun ExpirySheet(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        val titleText = if (isSarcasticMode) "Really?" else "Time is Up!"
+        val titleText = if (isSarcasticMode) "Encore ${extensionCount + 1}?" else "Time is Up!"
         Text(
             text = titleText,
             style = MaterialTheme.typography.titleLarge,
@@ -792,15 +825,8 @@ fun ExpirySheet(
 
         // Remembered unconditionally (keyed by the extension count) so each expiry shows a
         // fresh, escalating remark and the slot table stays stable in sarcastic mode.
-        val sarcasticExpiryRemark = remember(extensionCount) {
-            when {
-                extensionCount == 0 -> com.example.domain.SARCASTIC_EXTENSION_L1.random()
-                extensionCount == 1 -> com.example.domain.SARCASTIC_EXTENSION_L2.random()
-                extensionCount == 2 -> com.example.domain.SARCASTIC_EXTENSION_L3.random()
-                else -> com.example.domain.SARCASTIC_EXTENSION_L4.random()
-            }
-        }
-        val promptText = if (isSarcasticMode) sarcasticExpiryRemark else "Your conscious window for $appName has expired."
+        val sarcasticExpiryRemark = remember(packageName, extensionCount) { extensionRemark(extensionCount) }
+        val promptText = if (isSarcasticMode) "$appName: $sarcasticExpiryRemark" else "Your conscious window for $appName has expired."
         Text(
             text = promptText,
             style = MaterialTheme.typography.bodyMedium,
@@ -866,7 +892,7 @@ fun ExpirySheet(
                     value = customMinutes,
                     onValueChange = { customMinutes = it },
                     valueRange = 1f..60f,
-                    steps = 59,
+                    steps = 58,
                     colors = SliderDefaults.colors(
                         thumbColor = GuardMintAccent,
                         activeTrackColor = GuardMintAccent,
@@ -886,7 +912,7 @@ fun ExpirySheet(
                 .fillMaxWidth()
                 .height(48.dp)
         ) {
-            val sarcasticExtendText = remember { com.example.domain.SARCASTIC_START_BUTTONS.random() }
+            val sarcasticExtendText = remember(packageName, extensionCount) { SARCASTIC_EXTEND_BUTTONS.random() }
             val extendText = if (isSarcasticMode) sarcasticExtendText else "Extend Conscious Period"
             Text(extendText, fontWeight = FontWeight.Bold)
         }
@@ -902,13 +928,13 @@ fun ExpirySheet(
                 .fillMaxWidth()
                 .height(48.dp)
         ) {
-            Text(if (isSarcasticMode) "Directly Close" else "Close $appName", fontWeight = FontWeight.Bold)
+            Text(if (isSarcasticMode) "End the sequel" else "Close $appName", fontWeight = FontWeight.Bold)
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
         OutlinedButton(
-            onClick = onNoTimer,
+            onClick = { if (isSarcasticMode) showBypassAlert = true else onNoTimer() },
             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
             border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
             shape = RoundedCornerShape(24.dp),
@@ -916,10 +942,11 @@ fun ExpirySheet(
                 .fillMaxWidth()
                 .height(48.dp)
         ) {
-            Text(if (isSarcasticMode) "Do you really want to go ahead without a limit?" else "Continue without timer", fontWeight = FontWeight.Medium)
+            Text("Continue without timer", fontWeight = FontWeight.Medium)
         }
     }
 }
+
 @Composable
 fun QuotaExhaustedScreen(
     isSarcasticMode: Boolean = false,
@@ -1050,68 +1077,3 @@ fun QuotaExhaustedScreen(
         }
     }
 }
-
-val SARCASTIC_QUOTA = listOf(
-    "Your daily quota is gone. Impressive, really.",
-    "You budgeted your own time and still blew past it.",
-    "The limit you set? Yeah, that's toast.",
-    "Out of quota. But sure, let's pretend that means nothing.",
-    "You made a rule for yourself and here you are, breaking it.",
-    "Daily allowance: spent. Self-control: also spent.",
-    "This is exactly what 'just five minutes' turns into.",
-    "You set the limit. You. Remember that.",
-    "Quota exhausted. Willpower, optional apparently.",
-    "Even your own boundaries can't save you today."
-)
-
-val SARCASTIC_LONG_DURATION = listOf(
-    "Are you really going to use it for this long?",
-    "Why not just move in with the app?",
-    "You realize there's an outside world, right?",
-    "I'm sure this is exactly what you need to do for the next eternity.",
-    "That's a lot of time to achieve absolutely nothing.",
-    "Your brain cells are already crying.",
-    "Is this your new full-time job?",
-    "Maybe take a break halfway through to blink?",
-    "I'm judging you. Hard.",
-    "This is why you don't accomplish your goals.",
-    "Sure, 'just a quick check' turned into a marathon.",
-    "Go ahead, let the algorithm consume you.",
-    "You have terrible time management skills.",
-    "Are you trying to set a record for procrastination?",
-    "Do you even know what sunlight looks like?",
-    "That's embarrassing, honestly.",
-    "Your screen time report is going to need a therapist.",
-    "I guess we're giving up on today.",
-    "Who needs a life when you have this app?",
-    "I'll start a stopwatch to see when you regret this.",
-    "Just admit you have no self-control."
-)
-
-val SARCASTIC_BYPASS = listOf(
-    "Do you really want to go timeless on this particular application?",
-    "Going off the grid, huh? We both know how this ends.",
-    "Bypassing the timer? Say goodbye to your productivity.",
-    "No limits? Bold strategy for someone with zero self-control.",
-    "Are you actively trying to waste your entire day?",
-    "I'll prepare the 'I told you so' for later.",
-    "Sure, let the algorithm completely consume your soul.",
-    "Timeless? More like brainless.",
-    "This is how you end up doomscrolling until 3 AM.",
-    "Do you even remember what fresh air smells like?",
-    "You are a cautionary tale in the making.",
-    "Why even install this app if you're just going to bypass it?",
-    "You're not fooling anyone. Not even yourself.",
-    "Your attention span is officially a tragedy.",
-    "I guess giving up is your default setting.",
-    "The sad part is, you know you shouldn't be doing this.",
-    "You are actively making yourself dumber.",
-    "Are you allergic to productivity?",
-    "Letting the screen win again, I see.",
-    "This is why you have a backlog of unaccomplished dreams.",
-    "I hope whatever you're looking at is worth your future.",
-    "Complete and utter brain rot inbound.",
-    "You are a walking manifestation of zero self-control.",
-    "Just completely pathetic. There is no hope.",
-    "You are wasting oxygen by staring at this screen."
-)

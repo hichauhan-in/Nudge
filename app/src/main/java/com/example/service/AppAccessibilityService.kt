@@ -8,16 +8,32 @@ import android.content.IntentFilter
 import android.view.accessibility.AccessibilityEvent
 import com.example.data.AppDatabase
 import com.example.data.ScreenGuardRepository
+import com.example.data.MonitoredApp
+import com.example.domain.AccessibilityConsent
+import com.example.domain.AppSafety
 import com.example.domain.SessionManager
 import com.example.domain.SessionState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 class AppAccessibilityService : AccessibilityService() {
-    private val serviceScope = CoroutineScope(Dispatchers.Main)
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var repository: ScreenGuardRepository
     private var launcherPackagesCache: Set<String>? = null
+    private var monitoredApps: Map<String, MonitoredApp> = emptyMap()
+    private var monitoredAppsReady = false
+    private var pendingForeground: Pair<String, String>? = null
+    private var lastOverlayPackage: String? = null
+    private var lastOverlayLaunch = 0L
+    private val consentListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == AccessibilityConsent.ACCEPTED_KEY && !AccessibilityConsent.isAccepted(this)) {
+            SessionManager.setMasterGuardEnabled(false)
+            disableSelf()
+        }
+    }
 
     // Resets timers when the phone is locked (only acts in CLEAR_ON_LOCK mode).
     private val screenReceiver = object : BroadcastReceiver() {
@@ -25,6 +41,7 @@ class AppAccessibilityService : AccessibilityService() {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
                 // Screen off = the user stopped using the app; bank its foreground time.
                 SessionManager.flushForegroundUsage()
+                SessionManager.lastUserAppPackage = null
                 if (SessionManager.timerMode.value == SessionManager.TIMER_MODE_CLEAR_ON_LOCK) {
                     SessionManager.resetAll()
                 }
@@ -69,20 +86,34 @@ class AppAccessibilityService : AccessibilityService() {
         val database = AppDatabase.getDatabase(this)
         repository = ScreenGuardRepository(database.dao())
         SessionManager.init(this)
-        registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
+        androidx.core.content.ContextCompat.registerReceiver(
+            this, screenReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        getSharedPreferences(AccessibilityConsent.PREFS_NAME, MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(consentListener)
 
         // Keep the set of quota-enabled packages current so foreground usage is charged correctly.
         serviceScope.launch {
             repository.allMonitoredApps.collect { apps ->
-                SessionManager.setQuotaConfig(
-                    apps.filter { it.dailyQuotaMinutes > 0 }.associate { it.packageName to it.dailyQuotaMinutes }
-                )
+                val eligible = apps.filter { !AppSafety.isProtected(it.packageName, packageName) && !isSystemLauncher(it.packageName) }
+                monitoredApps = eligible.filter { it.isEnabled }.associateBy { it.packageName }
+                SessionManager.setMonitoredApps(eligible)
+                monitoredAppsReady = true
+                pendingForeground?.let { (foregroundPackage, foregroundClass) ->
+                    pendingForeground = null
+                    handleForeground(foregroundPackage, foregroundClass)
+                }
             }
         }
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        if (!AccessibilityConsent.isAccepted(this)) {
+            disableSelf()
+            return
+        }
         // Pin the process in memory so the running countdown survives leaving a monitored app.
         if (SessionManager.isMasterGuardEnabled.value) {
             MonitorService.start(this)
@@ -90,6 +121,11 @@ class AppAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        serviceScope.cancel()
+        SessionManager.flushForegroundUsage()
+        SessionManager.lastUserAppPackage = null
+        getSharedPreferences(AccessibilityConsent.PREFS_NAME, MODE_PRIVATE)
+            .unregisterOnSharedPreferenceChangeListener(consentListener)
         super.onDestroy()
         try {
             unregisterReceiver(screenReceiver)
@@ -99,6 +135,7 @@ class AppAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        if (!AccessibilityConsent.isAccepted(this)) return
         if (!SessionManager.isMasterGuardEnabled.value) return
 
         // We only care about which app comes to the foreground.
@@ -106,118 +143,72 @@ class AppAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: return
         val className = event.className?.toString() ?: ""
+        if (!monitoredAppsReady) {
+            pendingForeground = packageName to className
+            return
+        }
+        handleForeground(packageName, className)
+    }
 
-        val isOurApp = packageName == this.packageName
+    private fun handleForeground(packageName: String, className: String) {
+        if (!AccessibilityConsent.isAccepted(this) || !SessionManager.isMasterGuardEnabled.value) return
+        if (getSystemService(android.os.PowerManager::class.java)?.isInteractive != true ||
+            getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked == true) return
+        if (SessionManager.donationInProgress()) return
+        if (packageName == this.packageName) {
+            SessionManager.flushForegroundUsage()
+            return
+        }
+        if (isTransientOverlay(packageName, className)) return
 
-        // Transient system overlays (notification shade, Circle to Search, keyboard,
-        // permission dialogs, screenshots, etc.) and our own overlay must NEVER affect a
-        // running session. The app behind them is still "open", so ignore them entirely.
-        if (isOurApp || isTransientOverlay(packageName, className)) return
-
-        if (isSystemLauncher(packageName)) {
+        if (isSystemLauncher(packageName) || AppSafety.isProtected(packageName, this.packageName)) {
             // On the home screen; the monitored app is no longer in front. A still-valid
             // countdown keeps running silently in the background; only an already-expired
             // session (or a dismissed quota gate) is discarded so the next open starts fresh.
-            val s = SessionManager.sessionState.value
-            if (s is SessionState.Expired || s is SessionState.QuotaExhausted) SessionManager.resetState()
+            SessionManager.resetState()
             SessionManager.flushForegroundUsage()
             clearBypassExcept(null)
             SessionManager.lastUserAppPackage = null
             return
         }
 
-        // Ignore background noise such as heads-up notifications: their event can report
-        // another app's package even though the focused window hasn't changed. If the window
-        // that actually has focus belongs to a DIFFERENT app that still has a valid timer,
-        // this is not a real switch — leave the running session untouched.
-        val focusedPkg = currentForegroundPackage()
-        if (focusedPkg != null && focusedPkg != packageName && SessionManager.hasValidActiveTimer(focusedPkg)) return
-
         // A real, user-facing app is now in the foreground.
         SessionManager.lastUserAppPackage = packageName
-        SessionManager.noteForegroundUsage(packageName)
         clearBypassExcept(packageName)
-
-        // 1. This app already has a valid, unexpired timer -> never re-prompt. Checked against
-        //    the persisted end time, so it holds even if the in-memory session was lost
-        //    (service restart / process reclaimed while the app sat behind the shade).
-        if (SessionManager.hasValidActiveTimer(packageName)) return
-
+        val monitoredApp = monitoredApps[packageName]
+        if (monitoredApp == null) {
+            SessionManager.flushForegroundUsage()
+            SessionManager.resetState()
+            return
+        }
+        if (SessionManager.strictModeEnabled.value && SessionManager.isDailyQuotaExhausted(packageName, monitoredApp.dailyQuotaMinutes)) {
+            SessionManager.startQuotaBlock(packageName, monitoredApp.appName, true)
+            launchOverlay(packageName)
+            return
+        }
         val state = SessionManager.sessionState.value
-
-        // 2. A prompt is pending for this app. Seeing the app's own window here means the
-        //    prompt overlay is not in front (it was dismissed / minimized / back-pressed),
-        //    so re-show it instead of silently swallowing the open.
-        if (state is SessionState.Prompting && state.packageName == packageName) {
+        val pendingPackage = when (state) {
+            is SessionState.Prompting -> state.packageName
+            is SessionState.Expired -> state.packageName
+            is SessionState.QuotaExhausted -> state.packageName
+            else -> null
+        }
+        if (pendingPackage == packageName) {
             launchOverlay(packageName)
             return
         }
-
-        // 3. Timer expired while this app was in the foreground -> offer to extend.
-        if (state is SessionState.Expired && state.packageName == packageName) {
-            launchOverlay(packageName)
+        if (pendingPackage != null) SessionManager.resetState()
+        if (SessionManager.hasValidActiveTimer(packageName) || SessionManager.bypassedAppsTemp.contains(packageName)) {
+            SessionManager.noteForegroundUsage(packageName)
             return
         }
-
-        // 3b. Quota gate already raised for this app -> re-show it (it was dismissed/minimized).
-        if (state is SessionState.QuotaExhausted && state.packageName == packageName) {
-            launchOverlay(packageName)
-            return
+        SessionManager.flushForegroundUsage()
+        if (SessionManager.isDailyQuotaExhausted(packageName, monitoredApp.dailyQuotaMinutes)) {
+            SessionManager.startQuotaBlock(packageName, monitoredApp.appName, SessionManager.strictModeEnabled.value)
+        } else {
+            SessionManager.startPrompt(packageName, monitoredApp.appName)
         }
-
-        // 4. This app was bypassed for the current session -> allow free use.
-        if (SessionManager.bypassedAppsTemp.contains(packageName)) return
-
-        // 5. A leftover expired / quota session from another app -> discard it.
-        if (state is SessionState.Expired || state is SessionState.QuotaExhausted) SessionManager.resetState()
-
-        // 6. Prompt for a fresh timer only if this app is monitored and enabled.
-        serviceScope.launch {
-            val monitoredApp = repository.getMonitoredApp(packageName)
-            if (monitoredApp == null || !monitoredApp.isEnabled) return@launch
-
-            // Re-validate now that we're off the event thread (state may have changed).
-            if (SessionManager.hasValidActiveTimer(packageName)) return@launch
-            val now = SessionManager.sessionState.value
-            if (now is SessionState.Prompting && now.packageName == packageName) {
-                launchOverlay(packageName)
-                return@launch
-            }
-            if (now is SessionState.Expired && now.packageName == packageName) {
-                launchOverlay(packageName)
-                return@launch
-            }
-            if (now is SessionState.QuotaExhausted && now.packageName == packageName) {
-                launchOverlay(packageName)
-                return@launch
-            }
-            if (SessionManager.bypassedAppsTemp.contains(packageName)) return@launch
-
-            val appLabel = getAppLabel(packageName)
-
-            // Daily quota spent for this app? Raise the red gate before any timer prompt.
-            if (SessionManager.isDailyQuotaExhausted(packageName, monitoredApp.dailyQuotaMinutes)) {
-                if (!SessionManager.startQuotaBlock(packageName, appLabel, SessionManager.strictModeEnabled.value)) return@launch
-                launchOverlay(packageName)
-                return@launch
-            }
-
-            if (!SessionManager.startPrompt(packageName, appLabel)) return@launch
-            launchOverlay(packageName)
-        }
-    }
-
-    /**
-     * Package name of the window that currently holds focus, or null if it can't be
-     * determined. Used to tell a real app switch apart from background noise like a
-     * heads-up notification (whose event may carry another app's package).
-     */
-    private fun currentForegroundPackage(): String? {
-        return try {
-            rootInActiveWindow?.packageName?.toString()
-        } catch (e: Exception) {
-            null
-        }
+        launchOverlay(packageName)
     }
 
     /**
@@ -225,14 +216,17 @@ class AppAccessibilityService : AccessibilityService() {
      * only while the user stays on the bypassed app; navigating elsewhere clears it.
      */
     private fun clearBypassExcept(keepPackage: String?) {
-        if (SessionManager.bypassedAppsTemp.isEmpty() || SessionManager.isDonationFlowActive) return
+        if (SessionManager.bypassedAppsTemp.isEmpty() || SessionManager.donationInProgress()) return
         val iterator = SessionManager.bypassedAppsTemp.iterator()
         while (iterator.hasNext()) {
             if (iterator.next() != keepPackage) iterator.remove()
         }
     }
 
-    override fun onInterrupt() {}
+    override fun onInterrupt() {
+        SessionManager.flushForegroundUsage()
+        SessionManager.lastUserAppPackage = null
+    }
 
     /**
      * Determines if a package/class represents a transient system overlay that should
@@ -281,6 +275,12 @@ class AppAccessibilityService : AccessibilityService() {
      * Launch the OverlayActivity for a given package.
      */
     private fun launchOverlay(packageName: String) {
+        if (!AccessibilityConsent.isAccepted(this) || !SessionManager.isMasterGuardEnabled.value || SessionManager.overlayVisible) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (lastOverlayPackage == packageName && now - lastOverlayLaunch < 600L) return
+        lastOverlayPackage = packageName
+        lastOverlayLaunch = now
+        SessionManager.flushForegroundUsage()
         val appLabel = getAppLabel(packageName)
         val overlayIntent = Intent(this@AppAccessibilityService, OverlayActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -290,7 +290,13 @@ class AppAccessibilityService : AccessibilityService() {
             putExtra("pkg", packageName)
             putExtra("name", appLabel)
         }
-        startActivity(overlayIntent)
+        try {
+            startActivity(overlayIntent)
+        } catch (exception: android.content.ActivityNotFoundException) {
+            SessionManager.resetState()
+        } catch (exception: SecurityException) {
+            SessionManager.resetState()
+        }
     }
 
     private fun getLauncherPackages(): Set<String> {
@@ -312,8 +318,7 @@ class AppAccessibilityService : AccessibilityService() {
 
     private fun isSystemLauncher(packageName: String): Boolean {
         val launchers = getLauncherPackages()
-        if (launchers.contains(packageName)) return true
-        return packageName.contains("launcher", ignoreCase = true) || packageName.contains("home", ignoreCase = true)
+        return launchers.contains(packageName)
     }
 
     private fun getAppLabel(packageName: String): String {

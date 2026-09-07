@@ -23,8 +23,20 @@ class NudgeWidgetProvider : AppWidgetProvider() {
         appWidgetManager: AppWidgetManager,
         appWidgetIds: IntArray
     ) {
-        for (appWidgetId in appWidgetIds) {
-            updateWidget(context, appWidgetManager, appWidgetId)
+        if (appWidgetIds.isEmpty()) return
+        val pending = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val sessions = AppDatabase.getDatabase(context).dao().getAllSessionsFlow().first()
+                val today = com.example.domain.HistoryIndex(sessions).on(java.time.LocalDate.now())
+                for (appWidgetId in appWidgetIds) {
+                    updateWidget(context, appWidgetManager, appWidgetId, today)
+                }
+            } catch (exception: Exception) {
+                android.util.Log.e("NudgeWidget", "Could not update local widget statistics", exception)
+            } finally {
+                pending?.finish()
+            }
         }
     }
 
@@ -44,7 +56,8 @@ class NudgeWidgetProvider : AppWidgetProvider() {
         fun updateWidget(
             context: Context,
             appWidgetManager: AppWidgetManager,
-            appWidgetId: Int
+            appWidgetId: Int,
+            today: com.example.domain.DayHistory = com.example.domain.DayHistory()
         ) {
             val views = RemoteViews(context.packageName, R.layout.nudge_widget_layout)
 
@@ -60,33 +73,9 @@ class NudgeWidgetProvider : AppWidgetProvider() {
             )
             views.setOnClickPendingIntent(R.id.nudge_widget_root, configPendingIntent)
             views.setImageViewResource(R.id.widget_logo, R.drawable.ic_widget_lock)
-            views.setTextViewText(R.id.widget_pauses_count, "0 pauses")
-            views.setTextViewText(R.id.widget_savings, "0 min saved")
+            views.setTextViewText(R.id.widget_pauses_count, "${today.behavior.closed} resisted today")
+            views.setTextViewText(R.id.widget_savings, "${today.seconds / 60} min recorded today")
             appWidgetManager.updateAppWidget(appWidgetId, views)
-
-            // Compute statistics and update with real data post-launch
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val db = AppDatabase.getDatabase(context)
-                    val sessions = db.dao().getAllSessionsFlow().first()
-                    
-                    val totalPauses = sessions.size
-                    val minutesSaved = (totalPauses * 4.5f).toInt()
-
-                    withContext(Dispatchers.Main) {
-                        views.setTextViewText(R.id.widget_pauses_count, "$totalPauses pauses")
-                        views.setTextViewText(R.id.widget_savings, "$minutesSaved min saved")
-                        appWidgetManager.updateAppWidget(appWidgetId, views)
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    withContext(Dispatchers.Main) {
-                        views.setTextViewText(R.id.widget_pauses_count, "0 pauses")
-                        views.setTextViewText(R.id.widget_savings, "0 min saved")
-                        appWidgetManager.updateAppWidget(appWidgetId, views)
-                    }
-                }
-            }
         }
 
         fun triggerUpdate(context: Context) {

@@ -60,6 +60,12 @@ import com.example.data.MonitoredApp
 import com.example.data.ScreenGuardRepository
 import com.example.data.SessionHistory
 import com.example.domain.SessionManager
+import com.example.domain.AccessibilityConsent
+import com.example.domain.HistoryDates
+import com.example.domain.HistoryIndex
+import com.example.domain.SessionAction
+import com.example.domain.SARCASTIC_DISABLE
+import com.example.ui.AccessibilityDisclosure
 import com.example.service.AppAccessibilityService
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.GuardBlack
@@ -84,6 +90,16 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import kotlin.math.absoluteValue
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -103,7 +119,7 @@ class MainActivity : ComponentActivity() {
         // and only on a genuine fresh launch). Play decides whether to actually show it.
         if (savedInstanceState == null) {
             val reviewPrefs = getSharedPreferences("focus_time_prefs", Context.MODE_PRIVATE)
-            if (reviewPrefs.getBoolean("first_launch_done", false)) {
+            if (reviewPrefs.getBoolean("first_launch_done", false) && AccessibilityConsent.isAccepted(this)) {
                 AppReviewManager.maybeRequestReview(this)
             }
         }
@@ -111,6 +127,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        SessionManager.endDonationFlow()
+        SessionManager.flushForegroundUsage()
+        SessionManager.lastUserAppPackage = null
         // Re-post the monitoring banner so it appears right after the user enables notifications.
         if (SessionManager.isMasterGuardEnabled.value) {
             com.example.service.MonitorService.refresh(this)
@@ -148,7 +167,13 @@ class MainViewModel(private val repository: ScreenGuardRepository, context: Cont
     val searchQuery: StateFlow<String> = _searchQuery
 
     private val _installedApps = MutableStateFlow<List<AppDisplayItem>>(emptyList())
-    val installedApps: StateFlow<List<AppDisplayItem>> = _installedApps
+    val installedApps: StateFlow<List<AppDisplayItem>> = combine(_installedApps, repository.allMonitoredApps) { installed, monitored ->
+        val saved = monitored.associateBy { it.packageName }
+        installed.map { app ->
+            val config = saved[app.packageName]
+            app.copy(isEnabled = config?.isEnabled == true, isMonitored = config != null, dailyQuotaMinutes = config?.dailyQuotaMinutes ?: 0)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _isLoadingApps = MutableStateFlow(false)
     val isLoadingApps: StateFlow<Boolean> = _isLoadingApps
@@ -156,40 +181,42 @@ class MainViewModel(private val repository: ScreenGuardRepository, context: Cont
     val monitoredAppsFlow: Flow<List<MonitoredApp>> = repository.allMonitoredApps
     val sessionHistoryFlow: Flow<List<SessionHistory>> = repository.allSessions
 
-    // Screen State Flow
-    val statisticsState = combine(sessionHistoryFlow, monitoredAppsFlow) { history, monitored ->
-        val totalPauses = history.size
-        val completed = history.count { it.actionTaken == "COMPLETED" || it.actionTaken == "EXTENDED" }
+    private val calendarClock = flow {
+        while (true) {
+            val zone = ZoneId.systemDefault()
+            emit(LocalDate.now(zone) to zone)
+            kotlinx.coroutines.delay(60_000L)
+        }
+    }.distinctUntilChanged()
+
+    val statisticsState = combine(sessionHistoryFlow, monitoredAppsFlow, calendarClock) { history, monitored, clock ->
+        val index = HistoryIndex(history, clock.second)
+        val totalPauses = history.count { SessionAction.isChoice(it.actionTaken) }
+        val closed = history.count { it.actionTaken == SessionAction.CLOSED }
+        val extended = history.count { it.actionTaken == SessionAction.EXTENDED }
         val bypassed = history.count { it.actionTaken == "BYPASSED" }
         val guardedAppsCount = monitored.count { it.isEnabled }
-        
-        val successRate = if (totalPauses > 0) {
-            ((completed.toFloat() / totalPauses.toFloat()) * 100).toInt()
-        } else {
-            100
-        }
-
-        val totalTimeSeconds = history.sumOf { it.durationSeconds }
+        val successRate = com.example.domain.BehaviorCounts(closed, extended, bypassed).stopRate ?: 0
+        val totalTimeSeconds = history.sumOf { it.durationSeconds.coerceAtLeast(0).toLong() }
         
         DashboardStats(
             totalMindfulPauses = totalPauses,
-            totalTimeSpentMinutes = totalTimeSeconds / 60,
+            totalTimeSpentMinutes = (totalTimeSeconds / 60).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
             guardedAppsCount = guardedAppsCount,
             bypassedInterventions = bypassed,
             successPercentage = successRate,
-            recentLogs = history
+            recentLogs = history,
+            historyIndex = index,
+            referenceDate = clock.first
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardStats())
-
-    init {
-        loadInstalledApps()
-    }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardStats())
 
     fun setQuery(query: String) {
         _searchQuery.value = query
     }
 
     fun loadInstalledApps() {
+        if (_isLoadingApps.value) return
         viewModelScope.launch {
             _isLoadingApps.value = true
             val apps = withContext(Dispatchers.IO) {
@@ -200,17 +227,14 @@ class MainViewModel(private val repository: ScreenGuardRepository, context: Cont
                     }
                     val resolveInfos = pm.queryIntentActivities(mainIntent, 0) ?: emptyList()
                     
-                    // Read currently enabled monitored apps from Room once to cross reference
-                    val dbMonitored = try {
-                        repository.allMonitoredApps.first().associateBy { it.packageName }
-                    } catch (e: Exception) {
-                        emptyMap()
-                    }
+                    val homePackages = pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)
+                        .map { it.activityInfo.packageName }.toSet()
 
                     resolveInfos.mapNotNull { info ->
                         try {
                             val packageName = info.activityInfo?.packageName ?: return@mapNotNull null
-                            if (packageName == appContext.packageName) return@mapNotNull null
+                            if (com.example.domain.AppSafety.isProtected(packageName, appContext.packageName)) return@mapNotNull null
+                            if (packageName in homePackages) return@mapNotNull null
 
                             val rawAppName = try {
                                 info.loadLabel(pm).toString()
@@ -218,15 +242,7 @@ class MainViewModel(private val repository: ScreenGuardRepository, context: Cont
                                 packageName.substringAfterLast(".")
                             }
 
-                            val appName = if (rawAppName.contains("mShop", ignoreCase = true) || rawAppName.contains("amazon.mshop", ignoreCase = true) || rawAppName.contains("amazon", ignoreCase = true)) {
-                                "Amazon"
-                            } else if (rawAppName.contains("chrome", ignoreCase = true)) {
-                                "Chrome"
-                            } else if (rawAppName.contains("youtube", ignoreCase = true)) {
-                                "YouTube"
-                            } else {
-                                rawAppName
-                            }
+                            val appName = rawAppName
                             val icon = try {
                                 info.loadIcon(pm)
                             } catch (e: Exception) {
@@ -236,9 +252,7 @@ class MainViewModel(private val repository: ScreenGuardRepository, context: Cont
                             AppDisplayItem(
                                 packageName = packageName,
                                 appName = appName,
-                                isEnabled = dbMonitored[packageName]?.isEnabled ?: false,
-                                isMonitored = dbMonitored.containsKey(packageName),
-                                dailyQuotaMinutes = dbMonitored[packageName]?.dailyQuotaMinutes ?: 0,
+                                isEnabled = false,
                                 icon = icon
                             )
                         } catch (e: Exception) {
@@ -256,24 +270,7 @@ class MainViewModel(private val repository: ScreenGuardRepository, context: Cont
 
     fun toggleAppMonitoring(packageName: String, appName: String, currentlyEnabled: Boolean) {
         viewModelScope.launch {
-            val existingQuota = _installedApps.value.firstOrNull { it.packageName == packageName }?.dailyQuotaMinutes ?: 0
-            repository.insertMonitoredApp(
-                com.example.data.MonitoredApp(
-                    packageName = packageName,
-                    appName = appName,
-                    isEnabled = !currentlyEnabled,
-                    dailyQuotaMinutes = existingQuota
-                )
-            )
-            // Refresh list status
-            val updatedList = _installedApps.value.map {
-                if (it.packageName == packageName) {
-                    it.copy(isEnabled = !currentlyEnabled, isMonitored = true)
-                } else {
-                    it
-                }
-            }
-            _installedApps.value = updatedList
+            repository.toggleMonitoring(packageName, appName)
             if (SessionManager.isMasterGuardEnabled.value) {
                 com.example.service.MonitorService.refresh(appContext)
             }
@@ -282,32 +279,14 @@ class MainViewModel(private val repository: ScreenGuardRepository, context: Cont
 
     fun setAppDailyQuota(packageName: String, appName: String, isEnabled: Boolean, quotaMinutes: Int) {
         viewModelScope.launch {
-            repository.insertMonitoredApp(
-                com.example.data.MonitoredApp(
-                    packageName = packageName,
-                    appName = appName,
-                    isEnabled = isEnabled,
-                    dailyQuotaMinutes = quotaMinutes
-                )
-            )
-            _installedApps.value = _installedApps.value.map {
-                if (it.packageName == packageName) it.copy(dailyQuotaMinutes = quotaMinutes) else it
-            }
+            repository.updateDailyQuota(packageName, appName, isEnabled, quotaMinutes)
         }
     }
 
     fun deleteAppFromMonitoring(packageName: String) {
         viewModelScope.launch {
             repository.deleteMonitoredApp(packageName)
-            // Refresh list status
-            val updatedList = _installedApps.value.map {
-                if (it.packageName == packageName) {
-                    it.copy(isEnabled = false, isMonitored = false)
-                } else {
-                    it
-                }
-            }
-            _installedApps.value = updatedList
+            SessionManager.resetSessionForPackage(packageName)
             if (SessionManager.isMasterGuardEnabled.value) {
                 com.example.service.MonitorService.refresh(appContext)
             }
@@ -316,8 +295,7 @@ class MainViewModel(private val repository: ScreenGuardRepository, context: Cont
 
     fun clearAllLogs() {
         viewModelScope.launch {
-            repository.clearHistory()
-            com.example.service.NudgeWidgetProvider.triggerUpdate(appContext)
+            SessionManager.clearHistory(repository)
         }
     }
 }
@@ -328,7 +306,9 @@ data class DashboardStats(
     val guardedAppsCount: Int = 0,
     val bypassedInterventions: Int = 0,
     val successPercentage: Int = 100,
-    val recentLogs: List<SessionHistory> = emptyList()
+    val recentLogs: List<SessionHistory> = emptyList(),
+    val historyIndex: HistoryIndex = HistoryIndex(recentLogs),
+    val referenceDate: LocalDate = LocalDate.now()
 )
 
 // Simple ViewModel Factory without external framework injection
@@ -354,6 +334,18 @@ fun MainScreen() {
     var firstLaunchDone by remember { mutableStateOf(prefs.getBoolean("first_launch_done", false)) }
     var welcomeDone by remember { mutableStateOf(prefs.getBoolean("welcome_done", false)) }
     var hasPermissionOnStart by remember { mutableStateOf(isAccessibilityServiceEnabled(context)) }
+    var consentDecisionMade by remember { mutableStateOf(AccessibilityConsent.hasDecision(context)) }
+    var hasConsent by remember { mutableStateOf(AccessibilityConsent.isAccepted(context)) }
+    var disclosureRequested by remember { mutableStateOf(false) }
+
+    DisposableEffect(prefs) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            hasConsent = AccessibilityConsent.isAccepted(context)
+            consentDecisionMade = AccessibilityConsent.hasDecision(context)
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
 
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -369,10 +361,16 @@ fun MainScreen() {
     }
 
     val currentInitialState = when {
+        !welcomeDone && !firstLaunchDone -> InitialScreenState.Welcome
+        disclosureRequested || !consentDecisionMade -> InitialScreenState.Permission
         firstLaunchDone -> InitialScreenState.HomeApp
-        !welcomeDone -> InitialScreenState.Welcome
-        !hasPermissionOnStart -> InitialScreenState.Permission
         else -> InitialScreenState.Onboarding
+    }
+
+    LaunchedEffect(currentInitialState) {
+        if (currentInitialState == InitialScreenState.Onboarding || currentInitialState == InitialScreenState.HomeApp) {
+            viewModel.loadInstalledApps()
+        }
     }
 
     Crossfade(targetState = currentInitialState, label = "OnboardingCrossfade") { state ->
@@ -384,10 +382,24 @@ fun MainScreen() {
                 }
             }
             InitialScreenState.Permission -> {
-                IntroPermissionSplashScreen(
-                    isPermissionGranted = hasPermissionOnStart,
-                    onPermissionGranted = {
-                        hasPermissionOnStart = true
+                AccessibilityDisclosure(
+                    onAgree = {
+                        if (AccessibilityConsent.accept(context)) {
+                            hasConsent = true
+                            consentDecisionMade = true
+                            disclosureRequested = false
+                            SessionManager.setMasterGuardEnabled(true)
+                            openAccessibilitySettings(context)
+                        } else {
+                            android.widget.Toast.makeText(context, "Could not save consent. Please try again.", android.widget.Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    onDecline = {
+                        AccessibilityConsent.decline(context)
+                        SessionManager.setMasterGuardEnabled(false)
+                        hasConsent = false
+                        consentDecisionMade = true
+                        disclosureRequested = false
                     }
                 )
             }
@@ -399,12 +411,7 @@ fun MainScreen() {
             }
             InitialScreenState.HomeApp -> {
         var currentScreen by remember { mutableStateOf(NavigationScreen.Dashboard) }
-        var isServiceEnabled by remember { mutableStateOf(false) }
-
-        // Check accessibility status whenever this screen is displayed or resumed
-        LaunchedEffect(currentScreen) {
-            isServiceEnabled = isAccessibilityServiceEnabled(context)
-        }
+        val isServiceEnabled = hasPermissionOnStart && hasConsent
 
         val activity = context as? ComponentActivity
         androidx.activity.compose.BackHandler(enabled = true) {
@@ -518,11 +525,15 @@ fun MainScreen() {
             ) {
                 Crossfade(targetState = currentScreen, label = "ScreenTransition") { targetScreen ->
                     when (targetScreen) {
-                        NavigationScreen.Dashboard -> DashboardView(viewModel, isServiceEnabled, context)
-                        NavigationScreen.MonitoredApps -> MonitoredAppsView(viewModel)
-                        NavigationScreen.Settings -> SettingsView(viewModel, isServiceEnabled, context) {
-                            currentScreen = NavigationScreen.AppInfo
+                        NavigationScreen.Dashboard -> DashboardView(viewModel, isServiceEnabled, context) {
+                            disclosureRequested = true
                         }
+                        NavigationScreen.MonitoredApps -> MonitoredAppsView(viewModel)
+                        NavigationScreen.Settings -> SettingsView(
+                            viewModel, isServiceEnabled, context,
+                            onRequestAccessibility = { disclosureRequested = true },
+                            onNavigateToAppInfo = { currentScreen = NavigationScreen.AppInfo }
+                        )
                         NavigationScreen.AppInfo -> HowItWorksScrollView()
                     }
                 }
@@ -534,7 +545,7 @@ fun MainScreen() {
 }
 
 @Composable
-fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: Context) {
+fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: Context, onRequestAccessibility: () -> Unit) {
     var sarcasticDisableAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     
     if (sarcasticDisableAction != null) {
@@ -593,7 +604,7 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                     letterSpacing = 1.sp
                 )
                 Text(
-                    text = if (isMasterGuardEnabled) "MONITORING ACTIVE" else "MONITORING DISABLED",
+                    text = if (isMasterGuardEnabled && isServiceEnabled) "MONITORING ACTIVE" else "MONITORING PAUSED",
                     style = MaterialTheme.typography.labelSmall.copy(
                         color = if (isMasterGuardEnabled) GuardMintAccent else GuardTextSecondary,
                         fontWeight = FontWeight.Bold,
@@ -612,7 +623,9 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                     )
                     .clickable {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        if (isMasterGuardEnabled && isSarcasticMode) {
+                        if (!isMasterGuardEnabled && !isServiceEnabled) {
+                            onRequestAccessibility()
+                        } else if (isMasterGuardEnabled && isSarcasticMode) {
                             sarcasticDisableAction = {
                                 SessionManager.setMasterGuardEnabled(false)
                             }
@@ -641,7 +654,7 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                 border = BorderStroke(1.dp, Color.Red.copy(alpha = 0.3f)),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { openAccessibilitySettings(context) }
+                    .clickable(onClick = onRequestAccessibility)
             ) {
                 Row(
                     modifier = Modifier.padding(16.dp),
@@ -706,10 +719,10 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                     modifier = Modifier.fillMaxWidth(),
                     pageSpacing = 16.dp
                 ) { page ->
-                    val pageOffset = ((pagerState.currentPage - page) + pagerState.currentPageOffsetFraction)
-                        .absoluteValue.coerceIn(0f, 1f)
                     Box(
                         modifier = Modifier.graphicsLayer {
+                            val pageOffset = ((pagerState.currentPage - page) + pagerState.currentPageOffsetFraction)
+                                .absoluteValue.coerceIn(0f, 1f)
                             val scale = lerp(0.90f, 1f, 1f - pageOffset)
                             scaleX = scale
                             scaleY = scale
@@ -749,7 +762,7 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
         Spacer(modifier = Modifier.height(12.dp))
 
         // Shared 7-day activity graph — universal day selector, placed right below the carousel.
-        DaySelectorBars(stats.recentLogs, selectedDayOffset) { selectedDayOffset = it }
+        DaySelectorBars(stats, selectedDayOffset) { selectedDayOffset = it }
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -774,7 +787,7 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
                 modifier = Modifier.weight(1f),
                 icon = Icons.Default.TouchApp,
                 value = stats.totalMindfulPauses.toString(),
-                label = if (isSarcasticMode) "Weak Moments" else "Total Opens",
+                label = if (isSarcasticMode) "Plot Twists" else "Decisions",
                 accent = if (isSarcasticMode) Color(0xFFEF5350) else GuardMintAccent
             )
             MetricTile(
@@ -850,8 +863,8 @@ fun DashboardView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: 
         Spacer(modifier = Modifier.height(32.dp))
 
         // History Log Title — shares the universal day selector at the top of the dashboard.
-        val dayLogs = remember(stats.recentLogs, selectedDayOffset) {
-            logsForDay(stats.recentLogs, selectedDayOffset)
+        val dayLogs = remember(stats.historyIndex, stats.referenceDate, selectedDayOffset) {
+            logsForDay(stats, selectedDayOffset).filter { SessionAction.isChoice(it.actionTaken) }
         }
 
         Row(
@@ -1300,7 +1313,7 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Your digital space is currently unrestricted. Add more apps to monitor under the Configure page.",
+                        text = "No apps selected yet. Add apps in the Monitor Console.",
                         style = MaterialTheme.typography.bodySmall,
                         color = GuardTextSecondary,
                         textAlign = TextAlign.Center,
@@ -1590,9 +1603,24 @@ fun MonitoredAppsView(viewModel: MainViewModel) {
 
 
 @Composable
-fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: Context, onNavigateToAppInfo: () -> Unit) {
+fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: Context, onRequestAccessibility: () -> Unit, onNavigateToAppInfo: () -> Unit) {
     val coroutineScope = rememberCoroutineScope()
     val contextCurrent = androidx.compose.ui.platform.LocalContext.current
+    var showClearHistory by remember { mutableStateOf(false) }
+    if (showClearHistory) {
+        AlertDialog(
+            onDismissRequest = { showClearHistory = false },
+            containerColor = GuardSurface,
+            title = { Text("Clear local history?") },
+            text = { Text("All recorded usage and decisions will be deleted. Monitoring and active timers will pause. Your monitored apps and preferences stay. This cannot be undone.") },
+            confirmButton = {
+                TextButton(onClick = { showClearHistory = false; viewModel.clearAllLogs() }) {
+                    Text("Clear history", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { showClearHistory = false }) { Text("Cancel") } }
+        )
+    }
 
     var notificationsEnabled by remember { mutableStateOf(areNotificationsEnabled(context)) }
     val settingsLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
@@ -1669,7 +1697,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { openAccessibilitySettings(context) }
+                        .clickable(onClick = onRequestAccessibility)
                         .padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -1969,7 +1997,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                             color = Color.White
                         )
                         Text(
-                            text = if (sarcasticMode) "No more Mr. Nice App. You asked for this." else "Enable snarky remarks and sarcastic interventions",
+                            text = if (sarcasticMode) "Your limits now come with commentary." else "Optional, escalating wit about your scrolling choices.",
                             style = MaterialTheme.typography.bodySmall,
                             color = if (sarcasticMode) Color(0xFFEF5350).copy(alpha = 0.9f) else GuardTextSecondary
                         )
@@ -2016,28 +2044,32 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                "Wipe Intercept Logs",
+                                "Clear Local History",
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
                             )
                             Text(
-                                "Completely reset mindful statistics telemetry.",
+                                "Delete recorded usage and decisions.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = GuardTextSecondary
                             )
                         }
                         Button(
-                            onClick = { viewModel.clearAllLogs() },
+                            onClick = { showClearHistory = true },
                             colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.8f)),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("Reset Logs", fontWeight = FontWeight.Bold)
+                            Text("Clear", fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(32.dp))
+
+            com.example.ui.PrivacyControls()
+
+            Spacer(modifier = Modifier.height(24.dp))
 
             Text(
                 text = "ADDITIONAL OPTIONS",
@@ -2075,7 +2107,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Favorite,
-                                contentDescription = "UPI Support Heart",
+                                contentDescription = "Optional support",
                                 tint = GuardMintAccent,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -2095,7 +2127,7 @@ fun SettingsView(viewModel: MainViewModel, isServiceEnabled: Boolean, context: C
                         }
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = "Donate via UPI",
+                            contentDescription = "Support options",
                             tint = GuardTextSecondary,
                             modifier = Modifier.size(20.dp)
                         )
@@ -2408,10 +2440,9 @@ fun HowItWorksScrollView() {
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "To offer lightning-fast, zero-delay intervention, Nudge! utilizes Android's internal Accessibility Service framework. This runs on-device, registering window state change transitions.\n\n" +
-                                "• Real-time Detection: When you open any application, Android calls our package checker.\n" +
-                                "• Pure Package Filter: We ONLY check if the app's package ID (like com.instagram.android) matches your selected monitored list.\n" +
-                                "• Instant Overlay: If custom guards are active, our overlay blocking layer takes focus immediately, prompting you to decide if opening the app is truly intentional.",
+                        text = "After your in-app consent and Android approval, Nudge! uses AccessibilityService package-change events while running in the background.\n\n" +
+                            "Selected apps trigger reminders, session timers, and daily quotas. Foreground usage intervals and your choices stay in local history for the dashboard and weekly summaries.\n\n" +
+                            "Nudge! does not request screen-content access, read messages or passwords, or click controls in other apps. Android Settings and uninstall routes stay available. Reminder timing depends on Android and your device.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.85f),
                         fontFamily = FontFamily.Default,
@@ -2457,8 +2488,8 @@ fun HowItWorksScrollView() {
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     SecurityFactRow(
-                        title = "No Battery Drain or Polling",
-                        description = "Standard background monitoring tools constantly poll activity in high-CPU loops. Nudge! is purely reactive, letting Android notify us on transitions. It barely draws 1 to 2% background battery."
+                        title = "Event-driven monitoring",
+                        description = "Android notifies Nudge! of app changes. While a monitored app is active, usage is checkpointed every 30 seconds and a quota check is scheduled. Timers use a foreground service. Battery use and reminder timing vary by device; there is no fixed battery-drain guarantee."
                     )
                 }
             }
@@ -2546,10 +2577,11 @@ fun isAccessibilityServiceEnabled(context: Context): Boolean {
         context.contentResolver,
         Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
     ) ?: return false
-    return enabledServicesSetting.contains(expectedService.flattenToString())
+    return enabledServicesSetting.split(':').any { ComponentName.unflattenFromString(it) == expectedService }
 }
 
 fun openAccessibilitySettings(context: Context) {
+    if (!AccessibilityConsent.isAccepted(context)) return
     try {
         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -3545,23 +3577,15 @@ fun WelcomeSplashScreen(onContinue: () -> Unit) {
 // ---- Day-wise usage helpers for the dashboard carousel -------------------------------------
 
 private fun dayBoundsMillis(daysAgo: Int): Pair<Long, Long> {
-    val cal = java.util.Calendar.getInstance()
-    cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
-    cal.set(java.util.Calendar.MINUTE, 0)
-    cal.set(java.util.Calendar.SECOND, 0)
-    cal.set(java.util.Calendar.MILLISECOND, 0)
-    cal.add(java.util.Calendar.DAY_OF_YEAR, -daysAgo)
-    val start = cal.timeInMillis
-    return start to (start + 24L * 60L * 60L * 1000L)
+    return HistoryDates.dayBounds(LocalDate.now().minusDays(daysAgo.toLong()))
 }
 
-private fun logsForDay(logs: List<SessionHistory>, daysAgo: Int): List<SessionHistory> {
-    val (start, end) = dayBoundsMillis(daysAgo)
-    return logs.filter { it.startTime in start until end }
-}
+private fun logsForDay(stats: DashboardStats, daysAgo: Int): List<SessionHistory> =
+    stats.historyIndex.on(stats.referenceDate.minusDays(daysAgo.toLong())).records
 
-private fun dailyUsageMinutes(logs: List<SessionHistory>, daysAgo: Int): Int =
-    logsForDay(logs, daysAgo).sumOf { it.durationSeconds } / 60
+private fun dailyUsageMinutes(stats: DashboardStats, daysAgo: Int): Int =
+    (stats.historyIndex.on(stats.referenceDate.minusDays(daysAgo.toLong())).seconds / 60)
+        .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
 private fun dayLabel(daysAgo: Int): String = when (daysAgo) {
     0 -> "Today"
@@ -3571,14 +3595,7 @@ private fun dayLabel(daysAgo: Int): String = when (daysAgo) {
 
 /** Days-ago offset for a date picked in the Material date picker (which reports UTC midnight). */
 private fun offsetFromPickedUtcMillis(utcMillis: Long): Int {
-    val utc = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
-    utc.timeInMillis = utcMillis
-    val local = java.util.Calendar.getInstance()
-    local.set(utc.get(java.util.Calendar.YEAR), utc.get(java.util.Calendar.MONTH), utc.get(java.util.Calendar.DAY_OF_MONTH), 0, 0, 0)
-    local.set(java.util.Calendar.MILLISECOND, 0)
-    val (todayStart, _) = dayBoundsMillis(0)
-    val diffDays = ((todayStart - local.timeInMillis) / (24L * 60L * 60L * 1000L)).toInt()
-    return diffDays.coerceAtLeast(0)
+    return HistoryDates.offsetFromPicker(utcMillis)
 }
 
 /** e.g. "1 Jul – 7 Jul" for the 7-day window ending [weekEndOffset] days ago. */
@@ -3594,23 +3611,27 @@ private fun weekRangeLabel(weekEndOffset: Int): String {
 
 /** A tappable 7-day bar strip (oldest → today). Heights scale with each day's usage. */
 @Composable
-private fun DaySelectorBars(
-    recentLogs: List<SessionHistory>,
+internal fun DaySelectorBars(
+    stats: DashboardStats,
     selectedOffset: Int,
     onSelect: (Int) -> Unit
 ) {
-    val dayMinutes = remember(recentLogs) { (6 downTo 0).map { dailyUsageMinutes(recentLogs, it) } }
-    val maxMin = (dayMinutes.maxOrNull() ?: 0).coerceAtLeast(1)
+    val daySeconds = remember(stats.historyIndex, stats.referenceDate) {
+        (6 downTo 0).map { stats.historyIndex.on(stats.referenceDate.minusDays(it.toLong())).seconds }
+    }
+    val maxSeconds = (daySeconds.maxOrNull() ?: 0L).coerceAtLeast(1L)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(48.dp),
+            .height(48.dp)
+            .selectableGroup(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.Bottom
     ) {
         (6 downTo 0).forEachIndexed { index, daysAgo ->
-            val minutes = dayMinutes[index]
-            val heightFrac = (minutes.toFloat() / maxMin.toFloat()).coerceIn(0.06f, 1f)
+            val seconds = daySeconds[index]
+            val date = stats.referenceDate.minusDays(daysAgo.toLong())
+            val heightFrac = (seconds.toFloat() / maxSeconds.toFloat()).coerceIn(0.06f, 1f)
             val isSelected = daysAgo == selectedOffset
             val animatedHeightFrac by animateFloatAsState(
                 targetValue = heightFrac,
@@ -3618,26 +3639,36 @@ private fun DaySelectorBars(
                 label = "barHeight"
             )
             val animatedColor by animateColorAsState(
-                targetValue = if (isSelected) GuardMintAccent else Color.White.copy(alpha = if (minutes > 0) 0.12f else 0.04f),
+                targetValue = if (isSelected) GuardMintAccent else Color.White.copy(alpha = if (seconds > 0) 0.22f else 0.08f),
                 animationSpec = tween(durationMillis = 300),
                 label = "barColor"
             )
-            Box(
+            Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
                     .clip(RoundedCornerShape(4.dp))
-                    .clickable { onSelect(daysAgo) },
-                contentAlignment = Alignment.BottomCenter
+                    .selectable(selected = isSelected, role = Role.RadioButton, onClick = { onSelect(daysAgo) })
+                    .semantics { contentDescription = "${dayLabel(daysAgo)}, ${seconds / 60} minutes, $date" },
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight(animatedHeightFrac)
-                        .background(
-                            color = animatedColor,
-                            shape = RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp)
-                        )
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().fillMaxHeight(animatedHeightFrac)
+                            .background(animatedColor, RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                    )
+                }
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = date.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.getDefault()),
+                    color = if (isSelected) GuardMintAccent else GuardTextSecondary,
+                    fontSize = 9.sp,
+                    lineHeight = 12.sp,
+                    letterSpacing = 0.sp,
+                    maxLines = 1
                 )
             }
         }
@@ -3685,8 +3716,8 @@ fun MindfulUsageCard(stats: DashboardStats, selectedOffset: Int, modifier: Modif
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            val dayMinutes = remember(stats.recentLogs, selectedOffset) { dailyUsageMinutes(stats.recentLogs, selectedOffset) }
-            val daySessions = remember(stats.recentLogs, selectedOffset) { logsForDay(stats.recentLogs, selectedOffset).size }
+            val dayMinutes = dailyUsageMinutes(stats, selectedOffset)
+            val daySessions = stats.historyIndex.on(stats.referenceDate.minusDays(selectedOffset.toLong())).choices
 
             Row(
                 verticalAlignment = Alignment.Bottom,
@@ -3716,9 +3747,9 @@ fun MindfulUsageCard(stats: DashboardStats, selectedOffset: Int, modifier: Modif
 
             Text(
                 text = if (isSarcasticMode)
-                    "${dayLabel(selectedOffset)} · $daySessions mindless open${if (daySessions == 1) "" else "s"}"
+                    "${dayLabel(selectedOffset)} · $daySessions plot twist${if (daySessions == 1) "" else "s"}"
                 else
-                    "${dayLabel(selectedOffset)} · $daySessions monitored open${if (daySessions == 1) "" else "s"}",
+                    "${dayLabel(selectedOffset)} · $daySessions decision${if (daySessions == 1) "" else "s"}",
                 color = GuardTextSecondary,
                 fontSize = 14.sp
             )
@@ -3746,7 +3777,7 @@ fun AppUsageInsightCard(stats: DashboardStats, selectedOffset: Int, modifier: Mo
             ) {
                 Column {
                     Text(
-                        text = if (isSarcasticMode) "TIME WASTED" else "APP USAGE",
+                        text = if (isSarcasticMode) "ATTENTION INVOICES" else "APP USAGE",
                         style = MaterialTheme.typography.labelSmall.copy(
                             color = GuardTextSecondary,
                             fontWeight = FontWeight.Bold,
@@ -3784,15 +3815,7 @@ fun AppUsageInsightCard(stats: DashboardStats, selectedOffset: Int, modifier: Mo
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 label = "appUsageDay"
             ) { offset ->
-                val appTimes = remember(stats.recentLogs, offset) {
-                    logsForDay(stats.recentLogs, offset)
-                        .groupBy { it.appName }
-                        .mapValues { it.value.sumOf { log -> log.durationSeconds } / 60 }
-                        .toList()
-                        .filter { it.second > 0 }
-                        .sortedByDescending { it.second }
-                        .take(3)
-                }
+                val appTimes = stats.historyIndex.on(stats.referenceDate.minusDays(offset.toLong())).topApps
                 if (appTimes.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
@@ -3844,21 +3867,24 @@ fun InterventionBehaviorCard(stats: DashboardStats, selectedOffset: Int, modifie
         modifier = modifier
             .fillMaxWidth()
             .height(208.dp)
+            .testTag("behavior-card")
             .border(BorderStroke(1.dp, if (isSarcasticMode) Color.Red.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.05f)), RoundedCornerShape(32.dp))
     ) {
-        Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+        Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (isSarcasticMode) "WILLPOWER AUDIT" else "INTERVENTION BEHAVIOR",
+                        text = if (isSarcasticMode) "THE RECEIPTS" else "INTERVENTION BEHAVIOR",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.labelSmall.copy(
                             color = GuardTextSecondary,
                             fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
+                            letterSpacing = 0.sp
                         )
                     )
                     Text(
@@ -3892,21 +3918,12 @@ fun InterventionBehaviorCard(stats: DashboardStats, selectedOffset: Int, modifie
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 label = "behaviorDay"
             ) { offset ->
-                val actionCounts = remember(stats.recentLogs, offset) {
-                    logsForDay(stats.recentLogs, offset).groupingBy { it.actionTaken }.eachCount()
-                }
-                val closedCount = actionCounts["CLOSED"] ?: 0
-                val completedCount = actionCounts["COMPLETED"] ?: 0
-                val extendedCount = actionCounts["EXTENDED"] ?: 0
-                val bypassedCount = actionCounts["BYPASSED"] ?: 0
-                val total = closedCount + completedCount + extendedCount + bypassedCount
-                // Weighted discipline score so it isn't stuck at 100%: closing early is best,
-                // letting the limit run out is good, extending is a weak choice, and bypassing
-                // (ignoring the nudge outright) earns nothing.
-                val resistedCount = closedCount + completedCount
-                val score = if (total > 0)
-                    (closedCount * 100 + completedCount * 80 + extendedCount * 35) / total
-                else 0
+                val behavior = stats.historyIndex.on(stats.referenceDate.minusDays(offset.toLong())).behavior
+                val resistedCount = behavior.closed
+                val extendedCount = behavior.extended
+                val bypassedCount = behavior.bypassed
+                val total = behavior.total
+                val score = behavior.stopRate ?: 0
                 val scoreColor = when {
                     total == 0 -> GuardTextSecondary
                     score >= 80 -> GuardMintAccent
@@ -3918,7 +3935,7 @@ fun InterventionBehaviorCard(stats: DashboardStats, selectedOffset: Int, modifie
                         total == 0 -> "Nothing to judge... yet"
                         score >= 80 -> "Ugh, fine. Impressive."
                         score >= 50 -> "Barely holding on"
-                        else -> "Zero willpower detected"
+                        else -> "Goalposts on wheels"
                     }
                 } else {
                     when {
@@ -3937,8 +3954,8 @@ fun InterventionBehaviorCard(stats: DashboardStats, selectedOffset: Int, modifie
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column {
-                        Row(verticalAlignment = Alignment.Bottom) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.testTag("behavior-score")) {
                             Text(
                                 text = if (total == 0) "—" else animatedScore.toString(),
                                 fontSize = 32.sp,
@@ -3955,28 +3972,36 @@ fun InterventionBehaviorCard(stats: DashboardStats, selectedOffset: Int, modifie
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = scoreLabel,
-                            color = scoreColor,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = if (isSarcasticMode) "How often you behaved" else "Boundary respect rate",
-                            color = GuardTextSecondary,
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace
-                        )
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = scoreLabel,
+                                color = scoreColor,
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = if (isSarcasticMode) "Times you meant it" else "Stop rate",
+                                color = GuardTextSecondary,
+                                fontSize = 11.sp,
+                                lineHeight = 14.sp,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag("behavior-counts"),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        BehaviorStat("Resisted", resistedCount, GuardMintAccent)
-                        BehaviorStat("Extended", extendedCount, Color(0xFF81D4FA))
-                        BehaviorStat("Bypassed", bypassedCount, Color(0xFFEF5350))
+                        BehaviorStat("Resisted", resistedCount, GuardMintAccent, Modifier.weight(1f))
+                        BehaviorStat("Extended", extendedCount, Color(0xFF81D4FA), Modifier.weight(1f))
+                        BehaviorStat("Bypassed", bypassedCount, Color(0xFFEF5350), Modifier.weight(1f))
                     }
                 }
             }
@@ -3986,8 +4011,8 @@ fun InterventionBehaviorCard(stats: DashboardStats, selectedOffset: Int, modifie
 }
 
 @Composable
-fun BehaviorStat(label: String, count: Int, color: Color) {
-    Column(horizontalAlignment = Alignment.Start) {
+fun BehaviorStat(label: String, count: Int, color: Color, modifier: Modifier = Modifier) {
+    Column(modifier = modifier.semantics(mergeDescendants = true) { contentDescription = "$label: $count" }, horizontalAlignment = Alignment.Start) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
@@ -3999,6 +4024,9 @@ fun BehaviorStat(label: String, count: Int, color: Color) {
                 text = count.toString(),
                 color = Color.White,
                 fontSize = 16.sp,
+                lineHeight = 20.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace
             )
@@ -4008,8 +4036,11 @@ fun BehaviorStat(label: String, count: Int, color: Color) {
             text = label,
             color = GuardTextSecondary,
             fontSize = 10.sp,
+            lineHeight = 14.sp,
             fontFamily = FontFamily.Monospace,
-            letterSpacing = 0.5.sp
+            letterSpacing = 0.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -4019,47 +4050,37 @@ fun BehaviorStat(label: String, count: Int, color: Color) {
 fun WeeklySummaryCard(stats: DashboardStats, modifier: Modifier = Modifier) {
     val logs = stats.recentLogs
 
-    // The 7-day window ends `weekEndOffset` days ago (0 = today = the default "last 7 days").
-    // Tapping the calendar icon opens a popup to pick any past day; the week becomes the 7 days
-    // ending on that day. It can never be set into the future.
-    var weekEndOffset by remember { mutableStateOf(0) }
+    var selectedWeekEnd by rememberSaveable { mutableStateOf<Long?>(null) }
     var showWeekPicker by remember { mutableStateOf(false) }
-
-    val range = weekEndOffset..(weekEndOffset + 6)
-
-    val weekResisted = remember(logs, weekEndOffset) {
-        range.sumOf { off -> logsForDay(logs, off).count { it.actionTaken == "CLOSED" } }
-    }
-    val weekMinutes = remember(logs, weekEndOffset) {
-        range.sumOf { off -> dailyUsageMinutes(logs, off) }
-    }
-    val bestDayLabel = remember(logs, weekEndOffset) {
-        val topResisted = range
-            .map { off -> off to logsForDay(logs, off).count { it.actionTaken == "CLOSED" } }
-            .filter { it.second > 0 }
-            .maxByOrNull { it.second }
-        if (topResisted != null) {
-            dayLabel(topResisted.first)
-        } else {
-            val leastUsage = range
-                .filter { logsForDay(logs, it).isNotEmpty() }
-                .map { it to dailyUsageMinutes(logs, it) }
-                .minByOrNull { it.second }
-            if (leastUsage != null) dayLabel(leastUsage.first) else "—"
-        }
-    }
+    val weekEnd = selectedWeekEnd?.let(LocalDate::ofEpochDay)?.coerceAtMost(stats.referenceDate) ?: stats.referenceDate
+    val weekEndOffset = ChronoUnit.DAYS.between(weekEnd, stats.referenceDate).toInt()
+    val summary = remember(stats.historyIndex, weekEnd) { stats.historyIndex.weekEnding(weekEnd) }
+    val weekResisted = summary.resisted
+    val weekMinutes = summary.seconds / 60
+    val bestDayLabel = summary.bestDay?.let { date ->
+        if (weekEndOffset == 0) dayLabel(ChronoUnit.DAYS.between(date, stats.referenceDate).toInt())
+        else date.format(java.time.format.DateTimeFormatter.ofPattern("d MMM"))
+    } ?: "—"
     val screenTimeLabel = if (weekMinutes >= 60) "${weekMinutes / 60}h ${weekMinutes % 60}m" else "${weekMinutes}m"
 
     if (showWeekPicker) {
-        val todayMs = System.currentTimeMillis()
-        val currentYear = remember { java.util.Calendar.getInstance().get(java.util.Calendar.YEAR) }
-        val rangeState = rememberDateRangePickerState(
-            // Only render the last ~2 years of months instead of the default 1900..2100. This
-            // keeps the picker's internal scroll list tiny, so flinging through months stays smooth.
-            yearRange = (currentYear - 1)..currentYear,
-            selectableDates = object : SelectableDates {
-                override fun isSelectableDate(utcTimeMillis: Long): Boolean = utcTimeMillis <= todayMs
+        val today = stats.referenceDate
+        val firstYear = minOf(stats.historyIndex.days.keys.minOrNull()?.year ?: today.year, today.year - 1) - 1
+        val selectableDates = remember(today, firstYear) {
+            object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean =
+                    HistoryDates.canSelect(utcTimeMillis, today) &&
+                        HistoryDates.pickerDate(utcTimeMillis).minusDays(6).year >= firstYear
+                override fun isSelectableYear(year: Int): Boolean = year <= today.year
             }
+        }
+        val initialRange = remember(weekEnd) { HistoryDates.weekRange(weekEnd) }
+        val rangeState = rememberDateRangePickerState(
+            initialSelectedStartDateMillis = initialRange.first,
+            initialSelectedEndDateMillis = initialRange.second,
+            initialDisplayedMonthMillis = initialRange.second,
+            yearRange = firstYear..today.year,
+            selectableDates = selectableDates
         )
         // A single tap should highlight the whole 7-day week ending on that day. Whenever the
         // picker reports only a start (a fresh tap), snap the selection to [tap-6days, tap] so
@@ -4067,8 +4088,11 @@ fun WeeklySummaryCard(stats: DashboardStats, modifier: Modifier = Modifier) {
         LaunchedEffect(rangeState) {
             snapshotFlow { rangeState.selectedStartDateMillis to rangeState.selectedEndDateMillis }
                 .collect { (start, end) ->
-                    if (start != null && end == null) {
-                        rangeState.setSelection(start - 6L * 24 * 60 * 60 * 1000, start)
+                    if (start != null) {
+                        val selection = HistoryDates.weekRange(HistoryDates.pickerDate(end ?: start))
+                        if (start != selection.first || end != selection.second) {
+                            rangeState.setSelection(selection.first, selection.second)
+                        }
                     }
                 }
         }
@@ -4091,7 +4115,7 @@ fun WeeklySummaryCard(stats: DashboardStats, modifier: Modifier = Modifier) {
                         showModeToggle = false,
                         title = {
                             Text(
-                                text = "Tap any day to highlight its week",
+                                text = "SELECTED WEEK",
                                 modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp),
                                 color = GuardTextSecondary,
                                 fontFamily = FontFamily.Monospace,
@@ -4137,11 +4161,13 @@ fun WeeklySummaryCard(stats: DashboardStats, modifier: Modifier = Modifier) {
                         Spacer(modifier = Modifier.width(8.dp))
                         TextButton(
                             onClick = {
-                                val end = rangeState.selectedEndDateMillis ?: rangeState.selectedStartDateMillis
-                                end?.let { weekEndOffset = offsetFromPickedUtcMillis(it) }
+                                val end = rangeState.selectedEndDateMillis
+                                if (end != null && HistoryDates.canSelect(end, LocalDate.now())) {
+                                    selectedWeekEnd = HistoryDates.pickerDate(end).toEpochDay()
+                                }
                                 showWeekPicker = false
                             },
-                            enabled = rangeState.selectedStartDateMillis != null
+                            enabled = rangeState.selectedEndDateMillis != null
                         ) {
                             Text("Select week", color = GuardMintAccent, fontWeight = FontWeight.Bold)
                         }
@@ -4201,7 +4227,7 @@ fun WeeklySummaryCard(stats: DashboardStats, modifier: Modifier = Modifier) {
                         fontFamily = FontFamily.Monospace,
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .clickable { weekEndOffset = 0 }
+                            .clickable { selectedWeekEnd = null }
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }
@@ -4241,35 +4267,3 @@ private fun WeeklyStatItem(label: String, value: String) {
         )
     }
 }
-val SARCASTIC_DISABLE = listOf(
-    "You really want to give up improving yourself?",
-    "Quitting already? So typical.",
-    "Sure, let the apps control you again.",
-    "Giving up is easy, I understand.",
-    "Back to the endless scrolling we go.",
-    "I guess self-discipline isn't for everyone.",
-    "Wow, you lasted... what, five minutes?",
-    "Throwing in the towel? How predictable.",
-    "Sure, go ahead. Ruin your focus.",
-    "I'm not mad, just disappointed.",
-    "Back to your old habits, huh?",
-    "You were doing so well. Just kidding.",
-    "Don't worry, your future self is used to this.",
-    "A moment of weakness? Or a lifetime?",
-    "Disable it. See if I care.",
-    "It takes strength to keep going. You don't have it.",
-    "Enjoy the distractions.",
-    "Why even try in the first place?",
-    "There goes your productivity.",
-    "Let me guess: you 'need' this app?",
-    "Quitting is your best skill.",
-    "Go on, surrender to the algorithm.",
-    "Who needs focus anyway?",
-    "I'll be here when you realize your mistake.",
-    "You're making a huge mistake, but go ahead.",
-    "I suppose this is too hard for you.",
-    "Let's just pretend this never happened.",
-    "Self-improvement canceled.",
-    "Ah, the sweet embrace of failure.",
-    "Do you even want to succeed?"
-)

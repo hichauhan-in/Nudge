@@ -1,116 +1,95 @@
 package com.example.domain
 
 val SARCASTIC_EXTENSION_L1 = listOf(
-    "Just five more minutes, right? We've all heard that before.",
-    "Sure, 'just a little bit longer'.",
-    "Extending already? That didn't take long.",
-    "I guess your initial commitment meant nothing.",
-    "Ah, the classic snooze button for your digital life.",
-    "Need a little more time in the dopamine loop?",
-    "Okay, but only because you asked nicely.",
-    "Fine. But we both know you don't actually need this.",
-    "Procrastination level: Beginner.",
-    "A minor slip-up. Don't make a habit of it.",
-    "Extending? I'll pretend I'm surprised.",
-    "Just wrap it up. Seriously.",
-    "You realize the real world is still out there, right?",
-    "Did you really underestimate your addiction by that much?",
-    "I hope whatever you're looking at is worth it.",
-    "Alright, but your future self is judging you.",
-    "Is this productive, or just comfortable?",
-    "One extension is a mistake. Two is a choice.",
-    "Let me guess: you're 'almost done'?",
-    "Time flies when you're wasting it."
+    "The limit has filed a complaint. You are requesting an extension.",
+    "Just five minutes: the world's most renewable resource.",
+    "Your quick check now has a director's cut.",
+    "The timer kept its promise. Your move.",
+    "An extension? The feed must be about to end. Any century now.",
+    "The exit is right there. No subscription required.",
+    "Your future self would like a word. Apparently you need five more minutes."
 )
 
 val SARCASTIC_EXTENSION_L2 = listOf(
-    "Again? Really? Your self-control is dissolving.",
-    "This is getting embarrassing for both of us.",
-    "Are you physically unable to close the app?",
-    "Your attention span is officially a tragedy.",
-    "You're not even trying to stick to your goals anymore.",
-    "Procrastination level: Intermediate.",
-    "I'm starting to think you actually enjoy this digital prison.",
-    "Do you have anything better to do? Anything at all?",
-    "Just admit you're hooked. It's the first step.",
-    "Your brain is turning into mush. But sure, have more time.",
-    "I'd judge you, but you're doing a great job of disappointing yourself.",
-    "Another extension? How original.",
-    "The algorithm loves you. Your real-life friends, not so much.",
-    "You are the reason doom-scrolling was invented.",
-    "Are you allergic to productivity?",
-    "Why even set a limit if you're just going to ignore it?",
-    "You're not extending time, you're shortening your life.",
-    "I hope you're proud of yourself. Because I'm not.",
-    "Letting the screen win again, I see.",
-    "This is why you have a backlog of unaccomplished dreams."
+    "A sequel to 'Just One More'. Somehow the plot is identical.",
+    "Your deadline has become a suggestion with a nice font.",
+    "The algorithm has promoted you to unpaid quality assurance.",
+    "Another extension. Shall we send the limit a farewell card?",
+    "You have renegotiated this contract more often than you have read it.",
+    "Breaking news: the next post is also not the last post.",
+    "Your thumb is putting in overtime. Who approved the budget?"
 )
 
 val SARCASTIC_EXTENSION_L3 = listOf(
-    "Oh, look. The addict needs another hit.",
-    "Your lack of discipline is actually breathtaking.",
-    "Are you actively trying to waste your life, or does it just come naturally?",
-    "This is pathetic. Truly, deeply pathetic.",
-    "You are a slave to the pixels. Congratulations.",
-    "Procrastination level: Expert.",
-    "I bet you feel really good about yourself right now.",
-    "Just throw your whole phone in the trash at this point.",
-    "You have the willpower of a wet paper towel.",
-    "Is there a void in your soul you're trying to fill with this app?",
-    "You're beyond help. Just take the time.",
-    "I'm out of words for how disappointing this is.",
-    "The sad part is, you know you shouldn't be doing this.",
-    "You are actively making yourself dumber.",
-    "I guess giving up is your default setting.",
-    "Your screen time report is going to be a horror story.",
-    "Do you even remember what fresh air smells like?",
-    "You're a cautionary tale in the making.",
-    "Why don't you just marry the app?",
-    "You've officially hit rock bottom."
+    "This is no longer a quick check. It is a recurring appointment.",
+    "The timer is now doing performance art about boundaries.",
+    "Your five-minute plan has entered its third season.",
+    "The feed has no bottom. We have established this experimentally.",
+    "At this point, 'almost done' needs a fact-check label.",
+    "The app is free. The afternoon apparently came bundled.",
+    "We could close the app, but apparently we are collecting extensions."
 )
 
 val SARCASTIC_EXTENSION_L4 = listOf(
-    "You are an absolute clown.",
-    "Complete and utter brain rot.",
-    "I have zero respect for you right now.",
-    "You are a walking manifestation of zero self-control.",
-    "Just completely pathetic. There is no hope.",
-    "You are wasting oxygen by staring at this screen.",
-    "A total failure of human willpower.",
-    "You are entirely governed by a glowing rectangle.",
-    "Disgusting. Just absolutely disgusting.",
-    "Your life is slipping away, and you literally do not care.",
-    "You are everything wrong with modern society.",
-    "If laziness was an Olympic sport, you'd win gold.",
-    "I am genuinely repulsed by your lack of discipline.",
-    "You're not a person anymore, you're a mindless consumer.",
-    "You are the definition of a lost cause.",
-    "Just an absolute embarrassment to your ancestors.",
-    "You are literally decaying in front of this screen.",
-    "There is no excuse for this level of degeneracy.",
-    "You are beyond saving. Wallow in your digital filth.",
-    "Absolute trash-tier decision making."
+    "The limit is now a historical document. Please handle it with care.",
+    "Congratulations. You have invented a timer with no consequences.",
+    "Another encore. Even the end credits have end credits.",
+    "This is a subscription paid entirely in afternoons.",
+    "The algorithm sends its regards. It declined to send your time back.",
+    "At this rate, the next reminder should arrive with a tenancy agreement.",
+    "Your 'last one' has more sequels than a movie franchise."
 )
 
 val SARCASTIC_START_BUTTONS = listOf(
-    "Start because I have zero self-control",
-    "I am weak, let me in",
-    "I surrender to the algorithm",
-    "I have no willpower, continue",
-    "Give me my dopamine hit",
-    "I enjoy wasting my life, start",
-    "My brain is mush, let's go",
-    "I am a slave to my phone",
-    "I choose distraction over life",
-    "Enable my bad habits",
-    "I give up, start the timer",
-    "I hate myself, let me scroll",
-    "Feed my addiction",
-    "I have no discipline",
-    "Embrace the brain rot",
-    "I am pathetic, let me in",
-    "I'd rather be distracted",
-    "Let me waste more time",
-    "I accept my failure",
-    "Start my descent into madness"
+    "Begin the quick check", "Start the plot twist", "Let the feed audition",
+    "Start my tiny detour", "Clock my curiosity", "Start. Hold me to it."
 )
+
+val SARCASTIC_EXTEND_BUTTONS = listOf(
+    "Authorize the sequel", "Renegotiate reality", "Grant the encore",
+    "Move my own goalposts", "Extend the plot", "One more. Allegedly."
+)
+
+val SARCASTIC_BYPASS = listOf(
+    "Removing the limit because it worked. A fascinating troubleshooting strategy.",
+    "No timer? Bold choice for a feed that has never once said 'that's enough'.",
+    "You set a boundary and found the delete button. Very efficient.",
+    "The algorithm would like to thank you for disabling the competition.",
+    "Unlimited scrolling: all you can consume, billed in hours.",
+    "This session wants diplomatic immunity from your own plans.",
+    "The limit was your idea. I am merely the inconvenient witness.",
+    "Proceed without a timer? Your calendar has not approved this expense."
+)
+
+val SARCASTIC_LONG_DURATION = listOf(
+    "A quick look, now available in feature-length format.",
+    "That is not a glance. That is a booking.",
+    "The feed has accepted your generous donation of time.",
+    "Planning a scroll or negotiating a lease?",
+    "Your to-do list has been placed on hold. Excellent hold music, though.",
+    "A timer this long deserves an intermission.",
+    "The next post must be very important. Just like the previous ninety."
+)
+
+val SARCASTIC_QUOTA = listOf(
+    "Today's budget is spent. The feed did not send a receipt.",
+    "You set the quota. I brought the arithmetic.",
+    "Daily limit reached. The algorithm is requesting a budget increase.",
+    "Your attention allowance has left the chat.",
+    "The time budget is empty. The feed, mysteriously, is not.",
+    "A full day's quota. Gone in one very long 'quick check'."
+)
+
+val SARCASTIC_DISABLE = listOf(
+    "Pausing the referee? Your call. The feed will manage its own time, apparently.",
+    "Monitoring can take a break. Your plans still exist, for the record.",
+    "The reminders are clocking out. You are now the timekeeper.",
+    "Pause the nudges? Consider this my extremely brief handover note."
+)
+
+fun extensionRemark(extensionCount: Int): String = when (extensionCount.coerceAtLeast(0)) {
+    0 -> SARCASTIC_EXTENSION_L1.random()
+    1 -> SARCASTIC_EXTENSION_L2.random()
+    2 -> SARCASTIC_EXTENSION_L3.random()
+    else -> SARCASTIC_EXTENSION_L4.random()
+}
